@@ -20,6 +20,8 @@
  * OF THIS SOFTWARE.
  */
 
+#include <linux/dmi.h>
+#include <drm/drmP.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_encoder.h>
@@ -112,6 +114,27 @@ void drm_connector_ida_destroy(void)
 }
 
 /**
+ * nettop_no_lvds_dmi_table - list of nettops that need LVDS-1 disabled
+ *
+ * These machines are netbook boards inside of nettop bodies. They still
+ * show a connected 'LVDS-1' (builtin laptop monitor) display by default,
+ * causing Freon to use that as the default display. This list utilizes a
+ * quirk in drm_connector_get_cmdline_mode to force LVDS-1 off.
+ */
+static struct dmi_system_id __initdata nettop_no_lvds_dmi_table[] = {
+	{
+		.ident = "Acer Veriton N281G Nettop",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Acer"),
+			DMI_MATCH(DMI_PRODUCT_NAME,
+				"Veriton N281G"),
+			DMI_MATCH(DMI_BOARD_NAME, "TPDS03"),
+		},
+	},
+	{ }
+};
+
+/**
  * drm_connector_get_cmdline_mode - reads the user's cmdline mode
  * @connector: connector to quwery
  *
@@ -125,6 +148,16 @@ static void drm_connector_get_cmdline_mode(struct drm_connector *connector)
 {
 	struct drm_cmdline_mode *mode = &connector->cmdline_mode;
 	char *option = NULL;
+
+	/* Force LVDS-1 off for hardware specified in nettop_no_lvds_dmi_table.
+	 * Happens before actual command line parsing, so users may override this
+	 * behavior. */
+	if (connector->connector_type == DRM_MODE_CONNECTOR_LVDS &&
+	    dmi_check_system(nettop_no_lvds_dmi_table)) {
+		DRM_INFO("Quirk: Forcing %s connector OFF\n",
+			 connector->name);
+		connector->force = DRM_FORCE_OFF;
+	}
 
 	if (fb_get_options(connector->name, &option))
 		return;
