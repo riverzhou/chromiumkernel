@@ -131,6 +131,21 @@ static struct dmi_system_id __initdata nettop_no_lvds_dmi_table[] = {
 			DMI_MATCH(DMI_BOARD_NAME, "TPDS03"),
 		},
 	},
+	/**
+	 * OVER-5300
+	 *
+	 * the Veriton N280G claims it's an N281G on it's shell, but DMI info
+	 * refers to it as the N280G. It needs the same fix as the N281G.
+	 */
+	{
+		.ident = "Acer Veriton N280G Nettop",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Acer"),
+			DMI_MATCH(DMI_PRODUCT_NAME,
+				"Veriton N280G"),
+			DMI_MATCH(DMI_BOARD_NAME, "TPDS03"),
+		},
+	},
 	{ }
 };
 
