@@ -179,6 +179,7 @@ enum tpm2_cc_attrs {
 	TPM2_CC_ATTR_RHANDLE	= 28,
 };
 
+#define TPM_VID_ATMEL    0x1114
 #define TPM_VID_INTEL    0x8086
 #define TPM_VID_WINBOND  0x1050
 #define TPM_VID_STM      0x104A

@@ -857,6 +857,38 @@ static const struct tpm_class_ops tpm_tis = {
 	.clk_enable = tpm_tis_clkrun_enable,
 };
 
+/*
+ * Neverware: allow bypassing the TPM whitelist at boot for
+ * dev/testing purposes.
+ *
+ * The device is still checked against the whitelist so that the
+ * kernel log shows whether the device is whitelisted or not, but the
+ * TPM module is allowed to continue initializing.
+ */
+static bool tpm_bypass_whitelist = false;
+module_param(tpm_bypass_whitelist, bool, S_IRUGO);
+MODULE_PARM_DESC(tpm_bypass_whitelist,
+		 "Neverware: set to true to allow non-whitelisted TPM chips");
+
+/* Return non-zero if the chip is in our whitelist, zero otherwise
+ *
+ * did_vid: TPM vendor and device ID field. The two low bytes are
+ *          vendor ID, the two high bytes are device ID.
+ */
+static int tpm_in_neverware_whitelist(const u32 did_vid)
+{
+	const u16 vendor_id = did_vid;  /* truncate */
+	const u16 device_id = did_vid >> 16;
+	/* Only one whitelisted chip for now: the Atmel TPM used in
+	 * some Dell Latitudes */
+	if (vendor_id == TPM_VID_ATMEL && device_id == 0x3204)
+		return 1;
+
+	/* Chip is not in the whitelist */
+	return 0;
+}
+
+
 int tpm_tis_core_init(struct device *dev, struct tpm_tis_data *priv, int irq,
 		      const struct tpm_tis_phy_ops *phy_ops,
 		      acpi_handle acpi_dev_handle)
@@ -937,9 +969,21 @@ int tpm_tis_core_init(struct device *dev, struct tpm_tis_data *priv, int irq,
 	if (rc < 0)
 		goto out_err;
 
-	dev_info(dev, "%s TPM (device-id 0x%X, rev-id %d)\n",
+	dev_info(dev, "%s TPM (vendor-id 0x%X, device-id 0x%X, rev-id %d)\n",
 		 (chip->flags & TPM_CHIP_FLAG_TPM2) ? "2.0" : "1.2",
+		 (u16)vendor,  /* truncate */
 		 vendor >> 16, rid);
+
+	if (!tpm_in_neverware_whitelist(vendor)) {
+		dev_info(dev, "neverware: TPM device not in whitelist");
+		if (tpm_bypass_whitelist) {
+			dev_info(dev, "neverware: bypassing whitelist");
+		} else {
+			rc = -ENODEV;
+			goto out_err;
+		}
+	}
+	dev_info(dev, "neverware: TPM device in whitelist; continuing as usual");
 
 	probe = probe_itpm(chip);
 	if (probe < 0) {
