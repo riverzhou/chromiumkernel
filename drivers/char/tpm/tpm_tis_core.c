@@ -974,16 +974,15 @@ int tpm_tis_core_init(struct device *dev, struct tpm_tis_data *priv, int irq,
 		 (u16)vendor,  /* truncate */
 		 vendor >> 16, rid);
 
-	if (!tpm_in_neverware_whitelist(vendor)) {
-		dev_info(dev, "neverware: TPM device not in whitelist");
-		if (tpm_bypass_whitelist) {
-			dev_info(dev, "neverware: bypassing whitelist");
-		} else {
-			rc = -ENODEV;
-			goto out_err;
-		}
+	if (tpm_in_neverware_whitelist(vendor)) {
+		dev_info(dev, "neverware: TPM device in whitelist");
+		chip->flags |= TPM_CHIP_FLAG_WHITELISTED;
+	} else if (tpm_bypass_whitelist) {
+		dev_info(dev, "neverware: bypassing whitelist");
+		chip->flags |= TPM_CHIP_FLAG_WHITELISTED;
+	} else {
+		dev_info(dev, "neverware: TPM device not whitelisted");
 	}
-	dev_info(dev, "neverware: TPM device in whitelist; continuing as usual");
 
 	probe = probe_itpm(chip);
 	if (probe < 0) {
