@@ -1535,11 +1535,30 @@ static const struct dmi_system_id __initconst cr48_dmi_table[] = {
 	{ }
 };
 
+static bool broken_synaptics_rmi4;
+
+/* Some machines do not work with rmi4, skip them for now.
+ * OVER-5835
+ */
+static const struct dmi_system_id synaptics_rmi4_disable[] __initconst = {
+#if defined(CONFIG_DMI)
+	{
+		.ident = "ThinkPad Yoga 11e",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "20D90027US"),
+		},
+	},
+#endif
+	{ }
+};
+
 void __init synaptics_module_init(void)
 {
 	impaired_toshiba_kbc = dmi_check_system(toshiba_dmi_table);
 	broken_olpc_ec = dmi_check_system(olpc_dmi_table);
 	cr48_profile_sensor = dmi_check_system(cr48_dmi_table);
+	broken_synaptics_rmi4 = dmi_check_system(synaptics_rmi4_disable);
 }
 
 static int synaptics_init_ps2(struct psmouse *psmouse,
@@ -1786,6 +1805,13 @@ static int synaptics_setup_intertouch(struct psmouse *psmouse,
 					     "If i2c-hid and hid-rmi are not used, you might want to try setting psmouse.synaptics_intertouch to 1 and report this to linux-input@vger.kernel.org.\n",
 					     psmouse->ps2dev.serio->firmware_id);
 
+			return -ENXIO;
+		}
+		if (broken_synaptics_rmi4) {
+			psmouse_info(psmouse,
+				     "Your touchpad (%s) does not have a working intertouch driver, OVER-5835. "
+				     "Try setting psmouse.synaptics_intertouch to 1 and report working cases to Neverware.\n",
+				     psmouse->ps2dev.serio->firmware_id);
 			return -ENXIO;
 		}
 	}
