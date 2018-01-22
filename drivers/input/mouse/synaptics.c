@@ -1814,6 +1814,13 @@ static int synaptics_setup_intertouch(struct psmouse *psmouse,
 				     psmouse->ps2dev.serio->firmware_id);
 			return -ENXIO;
 		}
+		if (psmouse_matches_pnp_id(psmouse, synaptics_broken_intertouch)) {
+			psmouse_info(psmouse,
+				     "Your touchpad (%s) does not have a working intertouch driver, OVER-5797. "
+				     "Try setting psmouse.synaptics_intertouch to 1 and report working cases to Neverware.\n",
+				     psmouse->ps2dev.serio->firmware_id);
+			return -ENXIO;
+		}
 	}
 
 	psmouse_info(psmouse, "Trying to set up SMBus access\n");
