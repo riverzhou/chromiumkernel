@@ -1537,17 +1537,16 @@ static const struct dmi_system_id __initconst cr48_dmi_table[] = {
 
 static bool broken_synaptics_rmi4;
 
-/* Some machines do not work with rmi4, skip them for now.
- * OVER-5835
+/* Lenovo machines do not work with rmi4, skip them for now.
+ * OVER-5953, OVER-5835, OVER-5797
  */
 static const struct dmi_system_id synaptics_rmi4_disable[] __initconst = {
 #if defined(CONFIG_DMI)
 	{
-		.ident = "ThinkPad Yoga 11e",
+		.ident = "Lenovo",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "20D90027US"),
-		},
+		}
 	},
 #endif
 	{ }
@@ -1809,14 +1808,8 @@ static int synaptics_setup_intertouch(struct psmouse *psmouse,
 		}
 		if (broken_synaptics_rmi4) {
 			psmouse_info(psmouse,
-				     "Your touchpad (%s) does not have a working intertouch driver, OVER-5835. "
-				     "Try setting psmouse.synaptics_intertouch to 1 and report working cases to Neverware.\n",
-				     psmouse->ps2dev.serio->firmware_id);
-			return -ENXIO;
-		}
-		if (psmouse_matches_pnp_id(psmouse, synaptics_broken_intertouch)) {
-			psmouse_info(psmouse,
-				     "Your touchpad (%s) does not have a working intertouch driver, OVER-5797. "
+				     "Your touchpad (%s) does not have a working intertouch driver, OVER-5953. "
+				     "The device may fail to function after resuming from sleep."
 				     "Try setting psmouse.synaptics_intertouch to 1 and report working cases to Neverware.\n",
 				     psmouse->ps2dev.serio->firmware_id);
 			return -ENXIO;
