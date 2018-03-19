@@ -884,6 +884,10 @@ static int tpm_in_neverware_whitelist(const u32 did_vid)
 	if (vendor_id == TPM_VID_ATMEL && device_id == 0x3204)
 		return 1;
 
+	/* OVER-6255: enable TPM chip in Toshiba TCXWave 6140 tablet kiosk */
+	if (vendor_id == TPM_VID_WINBOND && device_id == 0xFE)
+		return 1;
+
 	/* Chip is not in the whitelist */
 	return 0;
 }
