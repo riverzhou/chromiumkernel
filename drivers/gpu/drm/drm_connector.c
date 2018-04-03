@@ -121,7 +121,7 @@ void drm_connector_ida_destroy(void)
  * causing Freon to use that as the default display. This list utilizes a
  * quirk in drm_connector_get_cmdline_mode to force LVDS-1 off.
  */
-static struct dmi_system_id __initdata nettop_no_lvds_dmi_table[] = {
+static struct dmi_system_id nettop_no_lvds_dmi_table[] = {
 	{
 		.ident = "Acer Veriton N281G Nettop",
 		.matches = {
