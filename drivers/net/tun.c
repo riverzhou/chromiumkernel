@@ -1395,6 +1395,10 @@ static void tun_net_init(struct net_device *dev)
 		/* Zero header length */
 		dev->type = ARPHRD_NONE;
 		dev->flags = IFF_POINTOPOINT | IFF_NOARP | IFF_MULTICAST;
+
+		/* IPv6 LL address is known to break some applications */
+		dev->priv_flags |= IFF_SUPPRESS_AUTO_IPV6_LL;
+
 		break;
 
 	case IFF_TAP:
