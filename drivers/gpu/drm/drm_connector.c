@@ -174,6 +174,19 @@ static void drm_connector_get_cmdline_mode(struct drm_connector *connector)
 		connector->force = DRM_FORCE_OFF;
 	}
 
+	/* Force SVIDEO connectors off.
+	 * Neverware does not support these and the intel driver
+	 * delays and possibly hangs when attempting to use them.
+	 * Users may override this to enable the connector via
+	 * the command line option: video=<name>:e.
+	 * OVER-6725
+	 */
+	if (connector->connector_type == DRM_MODE_CONNECTOR_SVIDEO) {
+		DRM_INFO("OVER-6725: Forcing %s connector OFF\n",
+			 connector->name);
+		connector->force = DRM_FORCE_OFF;
+	}
+
 	if (fb_get_options(connector->name, &option))
 		return;
 
