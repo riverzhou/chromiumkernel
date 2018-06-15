@@ -149,6 +149,21 @@ static struct dmi_system_id nettop_no_lvds_dmi_table[] = {
 	{ }
 };
 
+static struct dmi_system_id allow_svideo_dmi_table[] = {
+	/* In general we disable SVIDEO connectors because on some models
+	 * the Intel driver hangs on during boot while setting up SVIDEO,
+	 * but the MacBook 2,1 has corrupt graphics if SVIDEO is
+	 * disabled. [OVER-6829] */
+	{
+		.ident = "Apple MacBook 2,1",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "MacBook2,1"),
+		},
+	},
+	{ }
+};
+
 /**
  * drm_connector_get_cmdline_mode - reads the user's cmdline mode
  * @connector: connector to quwery
@@ -182,9 +197,14 @@ static void drm_connector_get_cmdline_mode(struct drm_connector *connector)
 	 * OVER-6725
 	 */
 	if (connector->connector_type == DRM_MODE_CONNECTOR_SVIDEO) {
-		DRM_INFO("OVER-6725: Forcing %s connector OFF\n",
-			 connector->name);
-		connector->force = DRM_FORCE_OFF;
+		if (dmi_check_system(allow_svideo_dmi_table)) {
+			DRM_INFO("OVER-6829: Allowing %s connector\n",
+				connector->name);
+		} else {
+			DRM_INFO("OVER-6725: Forcing %s connector OFF\n",
+				connector->name);
+			connector->force = DRM_FORCE_OFF;
+		}
 	}
 
 	if (fb_get_options(connector->name, &option))
