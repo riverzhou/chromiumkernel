@@ -152,33 +152,36 @@ static struct dmi_system_id nettop_no_lvds_dmi_table[] = {
 static struct dmi_system_id allow_svideo_dmi_table[] = {
 	/* In general we disable SVIDEO connectors because on some models
 	 * the Intel driver hangs on during boot while setting up SVIDEO,
-	 * but some MacBooks have corrupt graphics if SVIDEO is
+	 * but some iMacs/MacBooks have corrupt graphics if SVIDEO is
 	 * disabled. [OVER-6829] */
+	/* Note: some of these machines have a vendor of "Apple Inc.",
+	 * others have "Apple Computer, Inc.". Using "Apple" works for both
+	 * because it's a substring match. */
 	{
 		.ident = "Apple MacBook 1,1",
 		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
+			DMI_MATCH(DMI_SYS_VENDOR, "Apple"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "MacBook1,1"),
 		},
 	},
 	{
 		.ident = "Apple MacBook 2,1",
 		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
+			DMI_MATCH(DMI_SYS_VENDOR, "Apple"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "MacBook2,1"),
 		},
 	},
 	{
 		.ident = "Apple iMac 4,2",
 		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
+			DMI_MATCH(DMI_SYS_VENDOR, "Apple"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "iMac4,2"),
 		},
 	},
 	{
 		.ident = "Apple iMac 5,2",
 		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
+			DMI_MATCH(DMI_SYS_VENDOR, "Apple"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "iMac5,2"),
 		},
 	},
