@@ -797,6 +797,23 @@ static const struct dmi_system_id kempld_dmi_table[] __initconst = {
 };
 MODULE_DEVICE_TABLE(dmi, kempld_dmi_table);
 
+// OVER-6703
+// Disable the kempld_core module for some machines.
+static const struct dmi_system_id kempld_dmi_disabled_table[] __initconst = {
+	{
+		// The ELO VuPoint 15MX can't load the i2c_kempld driver when livebooting,
+		// causing `udevadm settle` to fail to complete. Avoid loading it ever.
+		.ident = "ELO VuPoint 15MX",
+		.matches = {
+			DMI_MATCH(DMI_BOARD_VENDOR, "Kontron"),
+			DMI_MATCH(DMI_BOARD_NAME, "COMe-bSC2"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Elo 19M2 Rev A"),
+			DMI_MATCH(DMI_PRODUCT_FAMILY, "M-Series AiO (VuPoint)"),
+		},
+	},
+	{}
+};
+
 static int __init kempld_init(void)
 {
 	const struct dmi_system_id *id;
@@ -810,6 +827,10 @@ static int __init kempld_init(void)
 		if (id->matches[0].slot == DMI_NONE)
 			return -ENODEV;
 	} else {
+		if (dmi_check_system(kempld_dmi_disabled_table)) {
+			printk(KERN_WARNING "kempld_core: Neverware: disabling kempld_core due to hardware match.\n");
+			return -ENODEV;
+		}
 		if (!dmi_check_system(kempld_dmi_table))
 			return -ENODEV;
 	}
