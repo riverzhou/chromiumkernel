@@ -874,11 +874,19 @@ MODULE_PARM_DESC(tpm_bypass_whitelist,
  *
  * did_vid: TPM vendor and device ID field. The two low bytes are
  *          vendor ID, the two high bytes are device ID.
+ *
+ *   flags: tpm_chip->flags field, used to check the TPM version.
  */
-static int tpm_in_neverware_whitelist(const u32 did_vid)
+static int tpm_in_neverware_whitelist(const u32 did_vid, unsigned int flags)
 {
 	const u16 vendor_id = did_vid;  /* truncate */
 	const u16 device_id = did_vid >> 16;
+
+	/* We don't support TPM 2.0 devices at all. Some IDs are shared
+	 * between 1.2 and 2.0 devices. */
+	if (flags & TPM_CHIP_FLAG_TPM2) {
+	  return 0;
+	}
 
 	/* Atmel TPM used in some Dell Latitudes */
 	if (vendor_id == TPM_VID_ATMEL && device_id == 0x3204)
@@ -982,7 +990,7 @@ int tpm_tis_core_init(struct device *dev, struct tpm_tis_data *priv, int irq,
 		 (u16)vendor,  /* truncate */
 		 vendor >> 16, rid);
 
-	if (tpm_in_neverware_whitelist(vendor)) {
+	if (tpm_in_neverware_whitelist(vendor, chip->flags)) {
 		dev_info(dev, "neverware: TPM device in whitelist");
 		chip->flags |= TPM_CHIP_FLAG_WHITELISTED;
 	} else if (tpm_bypass_whitelist) {
