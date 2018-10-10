@@ -803,11 +803,8 @@ static const struct dmi_system_id kempld_dmi_disabled_table[] __initconst = {
 	{
 		// The ELO VuPoint 15MX can't load the i2c_kempld driver when livebooting,
 		// causing `udevadm settle` to fail to complete. Avoid loading it ever.
-		.ident = "ELO VuPoint 15MX",
+		.ident = "ELO VuPoint 15MX/19MX",
 		.matches = {
-			DMI_MATCH(DMI_BOARD_VENDOR, "Kontron"),
-			DMI_MATCH(DMI_BOARD_NAME, "COMe-bSC2"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Elo 19M2 Rev A"),
 			DMI_MATCH(DMI_PRODUCT_FAMILY, "M-Series AiO (VuPoint)"),
 		},
 	},
