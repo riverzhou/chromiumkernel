@@ -1149,6 +1149,15 @@ static int usbhid_start(struct hid_device *hid)
 	usbhid->urbctrl->transfer_dma = usbhid->ctrlbuf_dma;
 	usbhid->urbctrl->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
+	/* Neverware: Macbook Pro 9,2 trackpad needs to have init reports
+	 * to function properly. This restores the old functionality
+	 * (pre-9143059fafd4) for the affected device(s) only.
+	 *
+	 * [OVER-7514]
+	 */
+	if (hid->quirks & HID_QUIRK_ALWAYS_INIT_REPORT)
+		usbhid_init_reports(hid);
+
 	set_bit(HID_STARTED, &usbhid->iofl);
 
 	if (hid->quirks & HID_QUIRK_ALWAYS_POLL) {
