@@ -1544,10 +1544,26 @@ static bool broken_synaptics_rmi4;
 static const struct dmi_system_id synaptics_rmi4_disable[] __initconst = {
 #if defined(CONFIG_DMI)
 	{
-		.ident = "Lenovo",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
-		}
+		},
+	},
+#endif
+	{ }
+};
+
+/*
+ * Some Lenovo machines work with rmi4, we should explicitly enable them
+ * for the time being. This is to catch machines that would be otherwise
+ * blacklisted by the synaptics_rmi_disable dmi table.
+ * OVER-7191
+ */
+static const struct dmi_system_id synaptics_rmi4_enable[] __initconst = {
+#if defined(CONFIG_DMI)
+	{
+		.matches = {
+			DMI_MATCH(DMI_PRODUCT_VERSION, "ThinkPad X1 Yoga 3rd"),
+		},
 	},
 #endif
 	{ }
@@ -1558,7 +1574,9 @@ void __init synaptics_module_init(void)
 	impaired_toshiba_kbc = dmi_check_system(toshiba_dmi_table);
 	broken_olpc_ec = dmi_check_system(olpc_dmi_table);
 	cr48_profile_sensor = dmi_check_system(cr48_dmi_table);
-	broken_synaptics_rmi4 = dmi_check_system(synaptics_rmi4_disable);
+	broken_synaptics_rmi4 =
+		dmi_check_system(synaptics_rmi4_disable) &&
+		!dmi_check_system(synaptics_rmi4_enable);
 }
 
 static int synaptics_init_ps2(struct psmouse *psmouse,
