@@ -153,11 +153,11 @@ static void dce5_crtc_load_lut(struct drm_crtc *crtc)
 
 	WREG32(EVERGREEN_DC_LUT_RW_INDEX + radeon_crtc->crtc_offset, 0);
 
-	/* Neverware: delay for a bit on AMD Caicos. This fixes
+	/* Neverware: delay for a bit on AMD Caicos and Turks. This fixes
 	 * psychedelic colors on boot and after resume.
 	 *
-	 * [OVER-7402] */
-	if (rdev->family == CHIP_CAICOS)
+	 * [OVER-7402] [OVER-7599] */
+	if (rdev->family == CHIP_CAICOS || rdev->family == CHIP_TURKS)
 		udelay(50);
 
 	r = crtc->gamma_store;
