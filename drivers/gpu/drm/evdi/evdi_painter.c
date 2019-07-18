@@ -429,6 +429,10 @@ void evdi_painter_mark_dirty(struct evdi_device *evdi,
 	struct evdi_framebuffer *efb = NULL;
 	struct evdi_painter *painter = evdi->painter;
 
+	if (!painter) {
+		EVDI_WARN("Painter does not exist!\n");
+		return;
+	}
 	painter_lock(evdi->painter);
 	efb = evdi->painter->scanout_fb;
 	if (!efb) {
@@ -461,6 +465,10 @@ void evdi_painter_send_update_ready_if_needed(struct evdi_device *evdi)
 {
 	struct evdi_painter *painter = evdi->painter;
 
+	if (!painter) {
+		EVDI_WARN("Painter does not exist!\n");
+		return;
+	}
 	painter_lock(evdi->painter);
 	if (painter->was_update_requested) {
 		evdi_painter_send_update_ready(painter);
