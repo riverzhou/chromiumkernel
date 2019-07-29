@@ -217,8 +217,6 @@ static int evdi_user_framebuffer_dirty(struct drm_framebuffer *fb,
 				       unsigned int num_clips)
 {
 	struct evdi_framebuffer *ufb = to_evdi_fb(fb);
-	struct drm_device *dev = ufb->base.dev;
-	struct evdi_device *evdi = dev->dev_private;
 	int i;
 	int ret = 0;
 
@@ -248,7 +246,6 @@ static int evdi_user_framebuffer_dirty(struct drm_framebuffer *fb,
 	if (ufb->obj->base.import_attach)
 		dma_buf_end_cpu_access(ufb->obj->base.import_attach->dmabuf,
 				       DMA_FROM_DEVICE);
-	atomic_add(1, &evdi->frame_count);
  unlock:
 	drm_modeset_unlock_all(fb->dev);
 	return ret;

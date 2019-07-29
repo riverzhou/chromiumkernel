@@ -46,8 +46,6 @@ struct evdi_device {
 	struct evdi_fbdev *fbdev;
 	struct evdi_painter *painter;
 
-	atomic_t frame_count;
-
 	int dev_index;
 };
 
@@ -77,7 +75,7 @@ int evdi_connector_init(struct drm_device *dev, struct drm_encoder *encoder);
 
 struct drm_encoder *evdi_encoder_init(struct drm_device *dev);
 
-int evdi_driver_load(struct drm_device *dev, unsigned long flags);
+int evdi_driver_setup(struct drm_device *dev);
 void evdi_driver_unload(struct drm_device *dev);
 void evdi_driver_preclose(struct drm_device *dev, struct drm_file *file_priv);
 
@@ -114,8 +112,6 @@ int evdi_gem_vmap(struct evdi_gem_object *obj);
 void evdi_gem_vunmap(struct evdi_gem_object *obj);
 int evdi_drm_gem_mmap(struct file *filp, struct vm_area_struct *vma);
 vm_fault_t evdi_gem_fault(struct vm_fault *vmf);
-void evdi_stats_init(struct evdi_device *evdi);
-void evdi_stats_cleanup(struct evdi_device *evdi);
 
 bool evdi_painter_is_connected(struct evdi_device *evdi);
 void evdi_painter_close(struct evdi_device *evdi, struct drm_file *file);
@@ -148,9 +144,6 @@ void evdi_painter_commit_scanout_buffer(struct evdi_device *evdi);
 struct drm_clip_rect evdi_framebuffer_sanitize_rect(
 			const struct evdi_framebuffer *fb,
 			const struct drm_clip_rect *rect);
-
-int evdi_driver_setup_early(struct drm_device *dev);
-void evdi_driver_setup_late(struct drm_device *dev);
 
 void evdi_painter_send_cursor_set(struct evdi_painter *painter,
 				  struct evdi_cursor *cursor);

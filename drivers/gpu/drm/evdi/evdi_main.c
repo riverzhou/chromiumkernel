@@ -17,8 +17,7 @@
 #include "evdi_drv.h"
 #include "evdi_cursor.h"
 
-int evdi_driver_load(struct drm_device *dev,
-		     __always_unused unsigned long flags)
+int evdi_driver_setup(struct drm_device *dev)
 {
 	struct platform_device *platdev = NULL;
 	struct evdi_device *evdi;
@@ -53,8 +52,6 @@ int evdi_driver_load(struct drm_device *dev,
 	if (ret)
 		goto err_fb;
 
-	evdi_stats_init(evdi);
-
 	drm_kms_helper_poll_init(dev);
 
 	platdev = to_platform_device(dev->dev);
@@ -74,11 +71,6 @@ err:
 	return ret;
 }
 
-void evdi_driver_setup_late(struct drm_device *dev)
-{
-	evdi_stats_init(dev->dev_private);
-}
-
 void evdi_driver_unload(struct drm_device *dev)
 {
 	struct evdi_device *evdi = dev->dev_private;
@@ -93,7 +85,6 @@ void evdi_driver_unload(struct drm_device *dev)
 	if (evdi->cursor)
 		evdi_cursor_free(evdi->cursor);
 	evdi_painter_cleanup(evdi);
-	evdi_stats_cleanup(evdi);
 #ifdef CONFIG_FB
 	evdi_fbdev_cleanup(dev);
 #endif /* CONFIG_FB */

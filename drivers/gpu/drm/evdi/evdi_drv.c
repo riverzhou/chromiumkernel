@@ -77,7 +77,6 @@ static void evdi_disable_vblank(__always_unused struct drm_device *dev,
 
 static struct drm_driver driver = {
 	.driver_features = DRIVER_MODESET | DRIVER_GEM | DRIVER_ATOMIC,
-	.load = evdi_driver_load,
 	.unload = evdi_driver_unload,
 	.preclose = evdi_driver_preclose,
 
@@ -133,64 +132,6 @@ static void evdi_add_device(void)
 	evdi_context.dev_count++;
 }
 
-
-int evdi_driver_setup_early(struct drm_device *dev)
-{
-	struct platform_device *platdev = NULL;
-	struct evdi_device *evdi;
-	int ret;
-
-	EVDI_CHECKPT();
-	evdi = kzalloc(sizeof(struct evdi_device), GFP_KERNEL);
-	if (!evdi)
-		return -ENOMEM;
-
-	evdi->ddev = dev;
-	dev->dev_private = evdi;
-
-	ret =	evdi_cursor_init(&evdi->cursor);
-	if (ret)
-		goto err;
-
-	EVDI_CHECKPT();
-	evdi_modeset_init(dev);
-
-	if (ret)
-		goto err;
-
-#ifdef CONFIG_FB
-	ret = evdi_fbdev_init(dev);
-	if (ret)
-		goto err;
-#endif /* CONFIG_FB */
-
-	ret = drm_vblank_init(dev, 1);
-	if (ret)
-		goto err_fb;
-
-	ret = evdi_painter_init(evdi);
-	if (ret)
-		goto err_fb;
-
-	drm_kms_helper_poll_init(dev);
-
-	platdev = to_platform_device(dev->dev);
-	platform_set_drvdata(platdev, dev);
-
-	return 0;
-
-err_fb:
-#ifdef CONFIG_FB
-	evdi_fbdev_cleanup(dev);
-#endif /* CONFIG_FB */
-err:
-	kfree(evdi);
-	EVDI_ERROR("%d\n", ret);
-	if (evdi->cursor)
-		evdi_cursor_free(evdi->cursor);
-	return ret;
-}
-
 static int evdi_platform_probe(struct platform_device *pdev)
 {
 	struct drm_device *dev;
@@ -202,15 +143,13 @@ static int evdi_platform_probe(struct platform_device *pdev)
 	if (IS_ERR(dev))
 		return PTR_ERR(dev);
 
-	ret = evdi_driver_setup_early(dev);
+	ret = evdi_driver_setup(dev);
 	if (ret)
 		goto err_free;
 
 	ret = drm_dev_register(dev, 0);
 	if (ret)
 		goto err_free;
-
-	evdi_driver_setup_late(dev);
 
 	return 0;
 
