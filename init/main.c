@@ -574,6 +574,29 @@ void __init __weak arch_call_rest_init(void)
 	rest_init();
 }
 
+static const struct dmi_system_id __initconst dmi_system_efi_blacklist[] = {
+	{
+		/* OVER-6986 Runtime services can panic on the T430. */
+		.matches = {
+			DMI_EXACT_MATCH(DMI_PRODUCT_FAMILY, "ThinkPad T430"),
+		},
+	},
+	{
+		/* HP ProBook x360 11 G1 EE with the Celeron N3450 will
+		 * panic  when efi variables are set.
+		 * Disable EFI services on these machines to protect against
+		 * the problem.
+		 * OVER-9289
+		 */
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "HP"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "x360 11 G1 EE"),
+		},
+	},
+	{}
+
+};
+
 asmlinkage __visible void __init start_kernel(void)
 {
 	char *command_line;
@@ -754,7 +777,7 @@ asmlinkage __visible void __init start_kernel(void)
 #ifdef CONFIG_X86
 	/* OVER-6986 Runtime services can panic on the T430. */
 	if (efi_enabled(EFI_RUNTIME_SERVICES) &&
-			dmi_match(DMI_PRODUCT_FAMILY, "ThinkPad T430"))
+			dmi_check_system(dmi_system_efi_blacklist))
 	{
 		pr_info("EFI: Disable runtime services on buggy firmware.");
 		clear_bit(EFI_RUNTIME_SERVICES, &efi.flags);
