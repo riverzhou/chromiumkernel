@@ -446,15 +446,12 @@ static void acpi_fujitsu_bl_notify(struct acpi_device *device, u32 event)
 /* ACPI device for hotkey handling */
 
 static const struct key_entry keymap_default[] = {
-	{ KE_KEY, KEY1_CODE,            { KEY_PROG1 } },
-	{ KE_KEY, KEY2_CODE,            { KEY_PROG2 } },
-	{ KE_KEY, KEY3_CODE,            { KEY_PROG3 } },
-	{ KE_KEY, KEY4_CODE,            { KEY_PROG4 } },
-	{ KE_KEY, KEY5_CODE,            { KEY_RFKILL } },
-	/* Soft keys read from status flags */
-	{ KE_KEY, FLAG_RFKILL,          { KEY_RFKILL } },
-	{ KE_KEY, FLAG_TOUCHPAD_TOGGLE, { KEY_TOUCHPAD_TOGGLE } },
-	{ KE_KEY, FLAG_MICMUTE,         { KEY_MICMUTE } },
+	{ KE_KEY, KEY1_CODE, { KEY_PROG1 } },
+	{ KE_KEY, KEY2_CODE, { KEY_PROG2 } },
+	{ KE_KEY, KEY3_CODE, { KEY_PROG3 } },
+	{ KE_KEY, KEY4_CODE, { KEY_PROG4 } },
+	{ KE_KEY, KEY5_CODE, { KEY_RFKILL } },
+	{ KE_KEY, BIT(26),   { KEY_TOUCHPAD_TOGGLE } },
 	{ KE_END, 0 }
 };
 
@@ -894,7 +891,6 @@ static void acpi_fujitsu_laptop_release(struct acpi_device *device)
 static void acpi_fujitsu_laptop_notify(struct acpi_device *device, u32 event)
 {
 	struct fujitsu_laptop *priv = acpi_driver_data(device);
-	unsigned long flags;
 	int scancode, i = 0;
 	unsigned int irb;
 
@@ -928,12 +924,9 @@ static void acpi_fujitsu_laptop_notify(struct acpi_device *device, u32 event)
 	 * have since added additional "soft keys". These are reported in the
 	 * status flags queried using FUNC_FLAGS.
 	 */
-	if (priv->flags_supported & (FLAG_SOFTKEYS)) {
-		flags = call_fext_func(device, FUNC_FLAGS, 0x1, 0x0, 0x0);
-		flags &= (FLAG_SOFTKEYS);
-		for_each_set_bit(i, &flags, BITS_PER_LONG)
-			sparse_keymap_report_event(priv->input, BIT(i), 1, true);
-	}
+	if ((priv->flags_supported & BIT(26)) &&
+	    (call_fext_func(device, FUNC_FLAGS, 0x1, 0x0, 0x0) & BIT(26)))
+		sparse_keymap_report_event(priv->input, BIT(26), 1, true);
 }
 
 /* Initialization */
