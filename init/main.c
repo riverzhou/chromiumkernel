@@ -775,12 +775,12 @@ asmlinkage __visible void __init start_kernel(void)
 	pid_idr_init();
 	anon_vma_init();
 #ifdef CONFIG_X86
-	/* OVER-6986 Runtime services can panic on the T430. */
 	if (efi_enabled(EFI_RUNTIME_SERVICES) &&
 			dmi_check_system(dmi_system_efi_blacklist))
 	{
 		pr_info("EFI: Disable runtime services on buggy firmware.");
 		clear_bit(EFI_RUNTIME_SERVICES, &efi.flags);
+		efi_memmap_unmap();
 	}
 	if (efi_enabled(EFI_RUNTIME_SERVICES))
 		efi_enter_virtual_mode();
