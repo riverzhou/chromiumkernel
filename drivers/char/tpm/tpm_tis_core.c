@@ -900,6 +900,19 @@ static int tpm_in_neverware_whitelist(const u32 did_vid, unsigned int flags)
 	if (vendor_id == TPM_VID_WINBOND && device_id == 0xFE)
 		return 1;
 
+	/* the vendor is INFINEON */
+	if (vendor_id == 0x15D1) {
+		/* OVER-10367 HP Elitebook 840 G1 */
+		if (device_id == 0xB)
+			return 1;
+		/* OVER-10366 HP Elitebook 840 G2 */
+		if (device_id == 0x1A)
+			return 1;
+		/* OVER-10365 HP Elitebook 840 G3 */
+		if (device_id == 0x1B)
+			return 1;
+	}
+
 	/* Chip is not in the whitelist */
 	return 0;
 }
