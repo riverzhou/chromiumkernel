@@ -65,3 +65,32 @@ g98_devinit_new(struct nvkm_device *device, int index,
 {
 	return nv50_devinit_new_(&g98_devinit, device, index, pinit);
 }
+
+static const struct dmi_system_id
+mcp79_force_post_ids[] = {
+	{
+		// Force NvForcePost=1 for Apple Nvidia 9400M devices.
+		// so that the external display works at higher
+		// resolutions. OVER-10385
+		.ident = "Apple NVIDIA 9400M",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
+		}
+	},
+	{ }
+};
+
+int
+mcp79_devinit_new(struct nvkm_device *device, int index,
+		  struct nvkm_devinit **pinit)
+{
+	int ret = nv50_devinit_new_(&g98_devinit, device, index, pinit);
+	// Force post on quirked Apple MCP79 devices to fix issues with
+	// external monitors.
+	// OVER-10385
+	if (!ret && dmi_check_system(mcp79_force_post_ids)) {
+		nvdev_info(device, "Force NvForcePost=1 for Apple device. OVER-10385\n");
+		(*pinit)->force_post = true;
+	}
+	return ret;
+}

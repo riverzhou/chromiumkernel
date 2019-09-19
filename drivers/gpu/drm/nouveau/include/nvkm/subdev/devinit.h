@@ -25,6 +25,7 @@ int nv20_devinit_new(struct nvkm_device *, int, struct nvkm_devinit **);
 int nv50_devinit_new(struct nvkm_device *, int, struct nvkm_devinit **);
 int g84_devinit_new(struct nvkm_device *, int, struct nvkm_devinit **);
 int g98_devinit_new(struct nvkm_device *, int, struct nvkm_devinit **);
+int mcp79_devinit_new(struct nvkm_device *, int, struct nvkm_devinit **);
 int gt215_devinit_new(struct nvkm_device *, int, struct nvkm_devinit **);
 int mcp89_devinit_new(struct nvkm_device *, int, struct nvkm_devinit **);
 int gf100_devinit_new(struct nvkm_device *, int, struct nvkm_devinit **);
