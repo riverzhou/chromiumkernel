@@ -17,6 +17,7 @@
  * this warranty disclaimer.
  */
 
+#include <linux/dmi.h>
 #include <linux/firmware.h>
 
 #include "decl.h"
@@ -30,6 +31,9 @@
 
 #define PCIE_VERSION	"1.0"
 #define DRV_NAME        "Marvell mwifiex PCIe"
+
+/* Flag to force the resume power state [OVER-10493]. */
+static bool force_resume_power_state = false;
 
 static struct mwifiex_if_ops pcie_ops;
 
@@ -195,6 +199,11 @@ static int mwifiex_pcie_resume(struct device *dev)
 	struct mwifiex_adapter *adapter;
 	struct pcie_service_card *card = dev_get_drvdata(dev);
 
+	/* Apply the force resume power state on a subset of devices. */
+	if (force_resume_power_state) {
+		struct pci_dev *pdev = container_of(dev, struct pci_dev, dev);
+		pci_set_power_state(pdev, PCI_D0);
+	}
 
 	if (!card->adapter) {
 		dev_err(dev, "adapter structure is not valid\n");
@@ -3247,8 +3256,23 @@ static struct mwifiex_if_ops pcie_ops = {
 	.up_dev =			mwifiex_pcie_up_dev,
 };
 
-module_pci_driver(mwifiex_pcie);
+static int __init mwifiex_pcie_init(void)
+{
+	if (dmi_match(DMI_PRODUCT_NAME, "Surface Pro 3"))
+	{
+		pr_info("Force mwifiex resume power state on the Microsoft Surface Pro 3. [OVER-10493]");
+		force_resume_power_state = true;
+	}
+	return pci_register_driver(&mwifiex_pcie);
+}
 
+static void __exit mwifiex_pcie_exit(void)
+{
+	pci_unregister_driver(&mwifiex_pcie);
+}
+
+module_init(mwifiex_pcie_init);
+module_exit(mwifiex_pcie_exit);
 MODULE_AUTHOR("Marvell International Ltd.");
 MODULE_DESCRIPTION("Marvell WiFi-Ex PCI-Express Driver version " PCIE_VERSION);
 MODULE_VERSION(PCIE_VERSION);
