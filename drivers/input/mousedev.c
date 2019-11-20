@@ -971,6 +971,39 @@ static void mixdev_remove_device(struct mousedev *mousedev)
 	put_device(&mousedev->dev);
 }
 
+#define USB_VENDOR_ID_EETI	0x0eef
+
+static const struct input_device_id mousedev_blacklist[] = {
+	/* Avoid virtual devices from EETI. */
+	{
+		.flags = INPUT_DEVICE_ID_MATCH_VENDOR | INPUT_DEVICE_ID_MATCH_BUS,
+		.vendor = USB_VENDOR_ID_EETI,
+		.bustype = BUS_VIRTUAL,
+	},
+	/* Avoid touchscreen devices from EETI. */
+	{
+		.flags = INPUT_DEVICE_ID_MATCH_VENDOR | INPUT_DEVICE_ID_MATCH_BUS,
+		.vendor = USB_VENDOR_ID_EETI,
+		.bustype = BUS_USB,
+	},
+	{}
+};
+
+static bool mousedev_match(struct input_handler *handler,
+			    struct input_dev *dev)
+{
+	const struct input_device_id *id;
+
+	for (id = mousedev_blacklist; id->flags; id++) {
+		if (input_match_device_id(dev, id)) {
+			dev_dbg(&dev->dev,
+				"mousedev: blacklisting '%s'\n", dev->name);
+			return false;
+		}
+	}
+	return true;
+}
+
 static int mousedev_connect(struct input_handler *handler,
 			    struct input_dev *dev,
 			    const struct input_device_id *id)
@@ -1052,6 +1085,7 @@ MODULE_DEVICE_TABLE(input, mousedev_ids);
 
 static struct input_handler mousedev_handler = {
 	.event		= mousedev_event,
+	.match 		= mousedev_match,
 	.connect	= mousedev_connect,
 	.disconnect	= mousedev_disconnect,
 	.legacy_minors	= true,

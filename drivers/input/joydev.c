@@ -756,6 +756,8 @@ static void joydev_cleanup(struct joydev *joydev)
 #define USB_VENDOR_ID_THQ			0x20d6
 #define USB_DEVICE_ID_THQ_PS3_UDRAW			0xcb17
 
+#define USB_VENDOR_ID_EETI			0x0eef
+
 #define ACCEL_DEV(vnd, prd)						\
 	{								\
 		.flags = INPUT_DEVICE_ID_MATCH_VENDOR |			\
@@ -787,6 +789,12 @@ static const struct input_device_id joydev_blacklist[] = {
 	ACCEL_DEV(USB_VENDOR_ID_SONY, USB_DEVICE_ID_SONY_PS4_CONTROLLER_2),
 	ACCEL_DEV(USB_VENDOR_ID_SONY, USB_DEVICE_ID_SONY_PS4_CONTROLLER_DONGLE),
 	ACCEL_DEV(USB_VENDOR_ID_THQ, USB_DEVICE_ID_THQ_PS3_UDRAW),
+	/* Avoid virtual devices from EETI. */
+	{
+		.flags = INPUT_DEVICE_ID_MATCH_VENDOR | INPUT_DEVICE_ID_MATCH_BUS,
+		.vendor = USB_VENDOR_ID_EETI,
+		.bustype = BUS_VIRTUAL,
+	},
 	{ /* sentinel */ }
 };
 

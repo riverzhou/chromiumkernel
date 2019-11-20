@@ -1343,6 +1343,32 @@ static void evdev_cleanup(struct evdev *evdev)
 	}
 }
 
+#define USB_VENDOR_ID_EETI	0x0eef
+
+static const struct input_device_id evdev_blacklist[] = {
+	/* Avoid touchscreen devices from EETI. */
+	{
+		.flags = INPUT_DEVICE_ID_MATCH_VENDOR | INPUT_DEVICE_ID_MATCH_BUS,
+		.vendor = USB_VENDOR_ID_EETI,
+		.bustype = BUS_USB,
+	},
+	{}
+};
+
+static bool evdev_match(struct input_handler *handler, struct input_dev *dev)
+{
+	const struct input_device_id *id;
+
+	for (id = evdev_blacklist; id->flags; id++) {
+		if (input_match_device_id(dev, id)) {
+			dev_dbg(&dev->dev,
+				"evdev: blacklisting '%s'\n", dev->name);
+			return false;
+		}
+	}
+	return true;
+}
+
 /*
  * Create new evdev device. Note that input core serializes calls
  * to connect and disconnect.
@@ -1434,6 +1460,7 @@ MODULE_DEVICE_TABLE(input, evdev_ids);
 static struct input_handler evdev_handler = {
 	.event		= evdev_event,
 	.events		= evdev_events,
+	.match		= evdev_match,
 	.connect	= evdev_connect,
 	.disconnect	= evdev_disconnect,
 	.legacy_minors	= true,
