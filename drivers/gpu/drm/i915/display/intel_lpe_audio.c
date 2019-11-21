@@ -180,6 +180,16 @@ static bool lpe_audio_detect(struct drm_i915_private *dev_priv)
 	int lpe_present = false;
 
 	if (IS_VALLEYVIEW(dev_priv) || IS_CHERRYVIEW(dev_priv)) {
+		/* Neverware: prevent the HDMI audio module from being loaded
+		 * on some devices. This fixes an issue with cras (that we
+		 * don't yet understand) where it uses 100% CPU. As a side
+		 * effect of course it disables HDMI audio. [OVER-10381] */
+		static const struct pci_device_id blacklisted_ids[] = {
+			/* Used in the Intel compute stick and the Minisforum Z83 */
+			{PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x22b0)},
+			{}
+		};
+
 		static const struct pci_device_id atom_hdaudio_ids[] = {
 			/* Baytrail */
 			{PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x0f04)},
@@ -188,7 +198,10 @@ static bool lpe_audio_detect(struct drm_i915_private *dev_priv)
 			{}
 		};
 
-		if (!pci_dev_present(atom_hdaudio_ids)) {
+		if (pci_dev_present(blacklisted_ids)) {
+			DRM_INFO("Neverware: disabling HDMI LPE audio device\n");
+			lpe_present = false;
+		} else if (!pci_dev_present(atom_hdaudio_ids)) {
 			DRM_INFO("HDaudio controller not detected, using LPE audio instead\n");
 			lpe_present = true;
 		}
