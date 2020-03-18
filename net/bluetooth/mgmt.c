@@ -106,11 +106,16 @@ static const u16 mgmt_commands[] = {
 	MGMT_OP_START_LIMITED_DISCOVERY,
 	MGMT_OP_READ_EXT_INFO,
 	MGMT_OP_SET_APPEARANCE,
+	MGMT_OP_GET_PHY_CONFIGURATION,
+	MGMT_OP_SET_PHY_CONFIGURATION,
+	MGMT_OP_SET_WAKE_CAPABLE,
+	/* Begin Chromium only op codes*/
 	MGMT_OP_SET_ADVERTISING_INTERVALS,
 	MGMT_OP_SET_EVENT_MASK,
 	MGMT_OP_SET_BLOCKED_LTKS,
 	MGMT_OP_READ_SUPPORTED_CAPABILITIES,
 	MGMT_OP_SET_KERNEL_DEBUG,
+	/* End Chromium only op codes */
 };
 
 static const u16 mgmt_events[] = {
@@ -1402,6 +1407,12 @@ static int set_discoverable(struct sock *sk, struct hci_dev *hdev, void *data,
 	if (!hci_dev_test_flag(hdev, HCI_CONNECTABLE)) {
 		err = mgmt_cmd_status(sk, hdev->id, MGMT_OP_SET_DISCOVERABLE,
 				      MGMT_STATUS_REJECTED);
+		goto failed;
+	}
+
+	if (hdev->advertising_paused) {
+		err = mgmt_cmd_status(sk, hdev->id, MGMT_OP_SET_DISCOVERABLE,
+				      MGMT_STATUS_BUSY);
 		goto failed;
 	}
 
@@ -3829,6 +3840,13 @@ void mgmt_start_discovery_complete(struct hci_dev *hdev, u8 status)
 	}
 
 	hci_dev_unlock(hdev);
+
+	/* Handle suspend notifier */
+	if (test_and_clear_bit(SUSPEND_UNPAUSE_DISCOVERY,
+			       hdev->suspend_tasks)) {
+		BT_DBG("Unpaused discovery");
+		wake_up(&hdev->suspend_wait_q);
+	}
 }
 
 static bool discovery_type_is_valid(struct hci_dev *hdev, uint8_t type,
@@ -3886,6 +3904,13 @@ static int start_discovery_internal(struct sock *sk, struct hci_dev *hdev,
 
 	if (!discovery_type_is_valid(hdev, cp->type, &status)) {
 		err = mgmt_cmd_complete(sk, hdev->id, op, status,
+					&cp->type, sizeof(cp->type));
+		goto failed;
+	}
+
+	/* Can't start discovery when it is paused */
+	if (hdev->discovery_paused) {
+		err = mgmt_cmd_complete(sk, hdev->id, op, MGMT_STATUS_BUSY,
 					&cp->type, sizeof(cp->type));
 		goto failed;
 	}
@@ -4057,6 +4082,12 @@ void mgmt_stop_discovery_complete(struct hci_dev *hdev, u8 status)
 	}
 
 	hci_dev_unlock(hdev);
+
+	/* Handle suspend notifier */
+	if (test_and_clear_bit(SUSPEND_PAUSE_DISCOVERY, hdev->suspend_tasks)) {
+		BT_DBG("Paused discovery");
+		wake_up(&hdev->suspend_wait_q);
+	}
 }
 
 static int stop_discovery(struct sock *sk, struct hci_dev *hdev, void *data,
@@ -4288,6 +4319,17 @@ static void set_advertising_complete(struct hci_dev *hdev, u8 status,
 	if (match.sk)
 		sock_put(match.sk);
 
+	/* Handle suspend notifier */
+	if (test_and_clear_bit(SUSPEND_PAUSE_ADVERTISING,
+			       hdev->suspend_tasks)) {
+		BT_DBG("Paused advertising");
+		wake_up(&hdev->suspend_wait_q);
+	} else if (test_and_clear_bit(SUSPEND_UNPAUSE_ADVERTISING,
+				      hdev->suspend_tasks)) {
+		BT_DBG("Unpaused advertising");
+		wake_up(&hdev->suspend_wait_q);
+	}
+
 	/* If "Set Advertising" was just disabled and instance advertising was
 	 * set up earlier, then re-enable multi-instance advertising.
 	 */
@@ -4338,6 +4380,10 @@ static int set_advertising(struct sock *sk, struct hci_dev *hdev, void *data,
 	if (cp->val != 0x00 && cp->val != 0x01 && cp->val != 0x02)
 		return mgmt_cmd_status(sk, hdev->id, MGMT_OP_SET_ADVERTISING,
 				       MGMT_STATUS_INVALID_PARAMS);
+
+	if (hdev->advertising_paused)
+		return mgmt_cmd_status(sk, hdev->id, MGMT_OP_SET_ADVERTISING,
+				       MGMT_STATUS_BUSY);
 
 	hci_dev_lock(hdev);
 
@@ -4766,6 +4812,37 @@ static int set_event_mask(struct sock *sk, struct hci_dev *hdev,
 
 failed:
 	hci_dev_unlock(hdev);
+	return err;
+}
+
+static int set_wake_capable(struct sock *sk, struct hci_dev *hdev, void *data,
+			    u16 len)
+{
+	int err;
+	u8 status;
+	struct mgmt_cp_set_wake_capable *cp = data;
+	u8 addr_type = cp->addr.type == BDADDR_BREDR ?
+			       cp->addr.type :
+			       le_addr_type(cp->addr.type);
+
+	BT_DBG("Set wake capable %pMR (type 0x%x) = 0x%x\n", &cp->addr.bdaddr,
+	       addr_type, cp->wake_capable);
+
+	if (cp->wake_capable)
+		err = hci_bdaddr_list_add(&hdev->wakeable, &cp->addr.bdaddr,
+					  addr_type);
+	else
+		err = hci_bdaddr_list_del(&hdev->wakeable, &cp->addr.bdaddr,
+					  addr_type);
+
+	if (!err || err == -EEXIST || err == -ENOENT)
+		status = MGMT_STATUS_SUCCESS;
+	else
+		status = MGMT_STATUS_FAILED;
+
+	err = mgmt_cmd_complete(sk, hdev->id, MGMT_OP_SET_WAKE_CAPABLE, status,
+				cp, sizeof(*cp));
+
 	return err;
 }
 
@@ -5894,6 +5971,13 @@ static int remove_device(struct sock *sk, struct hci_dev *hdev,
 			err = hci_bdaddr_list_del(&hdev->whitelist,
 						  &cp->addr.bdaddr,
 						  cp->addr.type);
+
+			/* Don't check result since it either succeeds or device
+			 * wasn't there (not wakeable or invalid params as
+			 * covered by deleting from whitelist).
+			 */
+			hci_bdaddr_list_del(&hdev->wakeable, &cp->addr.bdaddr,
+					    cp->addr.type);
 			if (err) {
 				err = mgmt_cmd_complete(sk, hdev->id,
 							MGMT_OP_REMOVE_DEVICE,
@@ -6699,24 +6783,12 @@ static void add_advertising_complete(struct hci_dev *hdev, u8 status,
 	cp = cmd->param;
 	rp.instance = cp->instance;
 
-	if (status) {
+	if (status)
 		mgmt_cmd_status(cmd->sk, cmd->index, cmd->opcode,
 				mgmt_status(status));
-		// Error codes from mgmt_status_table.
-		WARN_ONCE(status == 0x0c,
-			  "HCI error: Command Disallowed (%d)", status);
-		WARN_ONCE(status == 0x17,
-			  "HCI error: Repeated Attempts (%d)", status);
-		WARN_ONCE(status == 0x30,
-			  "HCI error: Role Switch Pending? (%d)", status);
-		WARN_ONCE(status == 0x35,
-			  "HCI error: Host Busy Pairing? (%d)", status);
-		WARN_ONCE(status == 0x37,
-			  "HCI error: Controller Busy? (%d)", status);
-	} else {
+	else
 		mgmt_cmd_complete(cmd->sk, cmd->index, cmd->opcode,
 				  mgmt_status(status), &rp, sizeof(rp));
-	}
 
 	mgmt_pending_remove(cmd);
 
@@ -6780,7 +6852,6 @@ static int add_advertising(struct sock *sk, struct hci_dev *hdev,
 	if (pending_find(MGMT_OP_ADD_ADVERTISING, hdev) ||
 	    pending_find(MGMT_OP_REMOVE_ADVERTISING, hdev) ||
 	    pending_find(MGMT_OP_SET_LE, hdev)) {
-		WARN_ONCE(1, "MGMT_OP_ADD_ADVERTISING error: pending command");
 		err = mgmt_cmd_status(sk, hdev->id, MGMT_OP_ADD_ADVERTISING,
 				      MGMT_STATUS_BUSY);
 		goto unlock;
@@ -6926,8 +6997,6 @@ static int remove_advertising(struct sock *sk, struct hci_dev *hdev,
 	if (pending_find(MGMT_OP_ADD_ADVERTISING, hdev) ||
 	    pending_find(MGMT_OP_REMOVE_ADVERTISING, hdev) ||
 	    pending_find(MGMT_OP_SET_LE, hdev)) {
-		WARN_ONCE(1,
-			  "MGMT_OP_REMOVE_ADVERTISING error: pending command");
 		err = mgmt_cmd_status(sk, hdev->id, MGMT_OP_REMOVE_ADVERTISING,
 				      MGMT_STATUS_BUSY);
 		goto unlock;
@@ -7137,6 +7206,35 @@ static const struct hci_mgmt_handler mgmt_handlers[] = {
 	{ read_ext_controller_info,MGMT_READ_EXT_INFO_SIZE,
 						HCI_MGMT_UNTRUSTED },
 	{ set_appearance,	   MGMT_SET_APPEARANCE_SIZE },
+	{ get_phy_configuration,   MGMT_GET_PHY_CONFIGURATION_SIZE },
+	{ set_phy_configuration,   MGMT_SET_PHY_CONFIGURATION_SIZE },
+	{ NULL }, // 0x0046
+	{ set_wake_capable,	   MGMT_SET_WAKE_CAPABLE_SIZE },
+	{ NULL }, // 0x0048
+	{ NULL }, // 0x0049
+	{ NULL }, // 0x004A
+	{ NULL }, // 0x0048
+	{ NULL }, // 0x004C
+	{ NULL }, // 0x004D
+	{ NULL }, // 0x004E
+	{ NULL }, // 0x004F
+	{ NULL }, // 0x0050
+	{ NULL }, // 0x0051
+	{ NULL }, // 0x0052
+	{ NULL }, // 0x0053
+	{ NULL }, // 0x0054
+	{ NULL }, // 0x0055
+	{ NULL }, // 0x0056
+	{ NULL }, // 0x0057
+	{ NULL }, // 0x0058
+	{ NULL }, // 0x0059
+	{ NULL }, // 0x005A
+	{ NULL }, // 0x005B
+	{ NULL }, // 0x005C
+	{ NULL }, // 0x005D
+	{ NULL }, // 0x005E
+	{ NULL }, // 0x005F
+	/* Begin Chromium only op_codes */
 	{ set_advertising_intervals, MGMT_SET_ADVERTISING_INTERVALS_SIZE },
 	{ set_event_mask,	   MGMT_SET_EVENT_MASK_CP_SIZE },
 	{ set_blocked_ltks,	   MGMT_SET_BLOCKED_LTKS_CP_SIZE },
@@ -7144,8 +7242,7 @@ static const struct hci_mgmt_handler mgmt_handlers[] = {
 	{ set_kernel_debug,	   MGMT_SET_KERNEL_DEBUG_SIZE,
 						HCI_MGMT_NO_HDEV |
 						HCI_MGMT_UNTRUSTED },
-	{ get_phy_configuration,   MGMT_GET_PHY_CONFIGURATION_SIZE },
-	{ set_phy_configuration,   MGMT_SET_PHY_CONFIGURATION_SIZE },
+	/* End Chromium only op_codes */
 };
 
 void mgmt_index_added(struct hci_dev *hdev)
@@ -7566,6 +7663,14 @@ void mgmt_device_disconnected(struct hci_dev *hdev, bdaddr_t *bdaddr,
 	ev.reason = reason;
 
 	mgmt_event(MGMT_EV_DEVICE_DISCONNECTED, hdev, &ev, sizeof(ev), sk);
+
+	if (hdev->disconnect_counter > 0) {
+		hdev->disconnect_counter--;
+		if (hdev->disconnect_counter <= 0) {
+			clear_bit(SUSPEND_DISCONNECTING, hdev->suspend_tasks);
+			wake_up(&hdev->suspend_wait_q);
+		}
+	}
 
 	if (sk)
 		sock_put(sk);
