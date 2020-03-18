@@ -2231,7 +2231,6 @@ static void hci_cs_disconnect(struct hci_dev *hdev, u8 status)
 {
 	struct hci_cp_disconnect *cp;
 	struct hci_conn *conn;
-	u8 type;
 
 	if (!status)
 		return;
@@ -2244,27 +2243,19 @@ static void hci_cs_disconnect(struct hci_dev *hdev, u8 status)
 
 	conn = hci_conn_hash_lookup_handle(hdev, __le16_to_cpu(cp->handle));
 	if (conn) {
+		u8 type = conn->type;
+
 		mgmt_disconnect_failed(hdev, &conn->dst, conn->type,
 				       conn->dst_type, status);
 
 		/* If the disconnection failed for any reason, the upper layer
 		 * does not retry to disconnect in current implementation.
-		 * Hence, we need to do some basic cleanup here.
-		 * TODO(b/72355862): Intel to fix the controller firmware.
-		 * The disconnect failure occurs sometimes on Intel 7265
-		 * controller as follows:
-		 *     > HCI Event: Command Status (0x0f) plen 4
-		 *         Disconnect (0x01|0x0006) ncmd 1
-		 *           Status: Unknown Connection Identifier (0x02)
+		 * Hence, we need to do some basic cleanup here and re-enable
+		 * advertising if necessary.
 		 */
-		BT_DBG("Do some disconnect cleanup.");
-
-		type = conn->type;
 		hci_conn_del(conn);
 		if (type == LE_LINK)
 			hci_req_reenable_advertising(hdev);
-	} else {
-		BT_DBG("The connection handle cannot be found.");
 	}
 
 	hci_dev_unlock(hdev);
@@ -2535,6 +2526,7 @@ static void hci_inquiry_result_evt(struct hci_dev *hdev, struct sk_buff *skb)
 static void hci_conn_complete_evt(struct hci_dev *hdev, struct sk_buff *skb)
 {
 	struct hci_ev_conn_complete *ev = (void *) skb->data;
+	struct inquiry_entry *ie;
 	struct hci_conn *conn;
 
 	BT_DBG("%s", hdev->name);
@@ -2543,14 +2535,29 @@ static void hci_conn_complete_evt(struct hci_dev *hdev, struct sk_buff *skb)
 
 	conn = hci_conn_hash_lookup_ba(hdev, ev->link_type, &ev->bdaddr);
 	if (!conn) {
-		if (ev->link_type != SCO_LINK)
-			goto unlock;
+		/* Connection may not exist if auto-connected. Check the inquiry
+		 * cache to see if we've already discovered this bdaddr before.
+		 * Create a new connection if it was previously discovered.
+		 */
+		ie = hci_inquiry_cache_lookup(hdev, &ev->bdaddr);
+		if (ie) {
+			conn = hci_conn_add(hdev, ev->link_type, &ev->bdaddr,
+					    HCI_ROLE_SLAVE);
+			if (!conn) {
+				bt_dev_err(hdev, "no memory for new conn");
+				goto unlock;
+			}
+		} else {
+			if (ev->link_type != SCO_LINK)
+				goto unlock;
 
-		conn = hci_conn_hash_lookup_ba(hdev, ESCO_LINK, &ev->bdaddr);
-		if (!conn)
-			goto unlock;
+			conn = hci_conn_hash_lookup_ba(hdev, ESCO_LINK,
+						       &ev->bdaddr);
+			if (!conn)
+				goto unlock;
 
-		conn->type = SCO_LINK;
+			conn->type = SCO_LINK;
+		}
 	}
 
 	if (!ev->status) {
@@ -4686,6 +4693,16 @@ static void hci_user_confirm_request_evt(struct hci_dev *hdev,
 		    conn->io_capability != HCI_IO_NO_INPUT_OUTPUT &&
 		    (loc_mitm || rem_mitm)) {
 			BT_DBG("Confirming auto-accept as acceptor");
+			confirm_hint = 1;
+			goto confirm;
+		}
+
+		/* If there already exists link key in local host, leave the
+		 * decision to user space since the remote device could be
+		 * legitimate or malicious.
+		 */
+		if (hci_find_link_key(hdev, &ev->bdaddr)) {
+			bt_dev_dbg(hdev, "Local host already has link key");
 			confirm_hint = 1;
 			goto confirm;
 		}
