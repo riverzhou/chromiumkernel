@@ -775,7 +775,6 @@ i915_gem_object_create_stolen_for_preallocated(struct drm_i915_private *i915,
 	mutex_unlock(&ggtt->vm.mutex);
 
 	GEM_BUG_ON(i915_gem_object_is_shrinkable(obj));
-	atomic_inc(&obj->bind_count);
 
 	return obj;
 
