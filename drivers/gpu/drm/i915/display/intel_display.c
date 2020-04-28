@@ -8770,8 +8770,13 @@ static void i9xx_get_pipe_color_config(struct intel_crtc_state *crtc_state)
 
 	tmp = I915_READ(DSPCNTR(i9xx_plane));
 
-	if (tmp & DISPPLANE_GAMMA_ENABLE)
-		crtc_state->gamma_enable = true;
+	if (tmp & DISPPLANE_GAMMA_ENABLE) {
+		if (!crtc_state->base.color_mgmt_changed) {
+			DRM_WARN("[OVER-11555] Ignoring existing gamma_enable state without color_mgmt_changed.\n");
+		} else {
+			crtc_state->gamma_enable = true;
+		}
+	}
 
 	if (!HAS_GMCH(dev_priv) &&
 	    tmp & DISPPLANE_PIPE_CSC_ENABLE)
