@@ -29,8 +29,10 @@ void __init efi_set_secure_boot(enum efi_secureboot_mode mode)
 			break;
 		case efi_secureboot_mode_enabled:
 			set_bit(EFI_SECURE_BOOT, &efi.flags);
+#ifdef LOCK_DOWN_IN_EFI_SECURE_BOOT
 			lock_kernel_down("EFI Secure Boot",
 					 LOCKDOWN_CONFIDENTIALITY_MAX);
+#endif /* LOCK_DOWN_IN_EFI_SECURE_BOOT */
 			pr_info("Secure boot enabled\n");
 			break;
 		default:
