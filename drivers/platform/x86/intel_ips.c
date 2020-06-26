@@ -547,8 +547,17 @@ static void ips_gpu_lower(struct ips_driver *ips)
 	if (!ips_gpu_turbo_enabled(ips))
 		return;
 
-	if (!ips->gpu_lower())
+	if (!ips->gpu_lower()) {
 		ips->gpu_turbo_enabled = false;
+		/* i915_gpu_lower only fails if an i915 device isn't
+		 * registered. Setting gpu_turbo_enabled to false
+		 * will lead to a call to gpu_turbo_disable which
+		 * will always fail for the same reason.
+		 * Avoid any attempts to disable gpu turbo for this
+		 * failure as it won't be possible.
+		 */
+		ips->__gpu_turbo_on = false;
+	}
 
 	return;
 }
