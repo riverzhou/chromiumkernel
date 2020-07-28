@@ -600,9 +600,9 @@ static int ci_cable_notifier(struct notifier_block *nb, unsigned long event,
 	return NOTIFY_DONE;
 }
 
-static enum usb_role ci_usb_role_switch_get(struct device *dev)
+static enum usb_role ci_usb_role_switch_get(struct usb_role_switch *sw)
 {
-	struct ci_hdrc *ci = dev_get_drvdata(dev);
+	struct ci_hdrc *ci = usb_role_switch_get_drvdata(sw);
 	enum usb_role role;
 	unsigned long flags;
 
@@ -613,9 +613,10 @@ static enum usb_role ci_usb_role_switch_get(struct device *dev)
 	return role;
 }
 
-static int ci_usb_role_switch_set(struct device *dev, enum usb_role role)
+static int ci_usb_role_switch_set(struct usb_role_switch *sw,
+				  enum usb_role role)
 {
-	struct ci_hdrc *ci = dev_get_drvdata(dev);
+	struct ci_hdrc *ci = usb_role_switch_get_drvdata(sw);
 	struct ci_hdrc_cable *cable = NULL;
 	enum usb_role current_role = ci_role_to_usb_role(ci);
 	unsigned long flags;
@@ -1116,6 +1117,7 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 	}
 
 	if (ci_role_switch.fwnode) {
+		ci_role_switch.driver_data = ci;
 		ci->role_switch = usb_role_switch_register(dev,
 					&ci_role_switch);
 		if (IS_ERR(ci->role_switch)) {
@@ -1261,6 +1263,29 @@ static void ci_controller_suspend(struct ci_hdrc *ci)
 	enable_irq(ci->irq);
 }
 
+/*
+ * Handle the wakeup interrupt triggered by extcon connector
+ * We need to call ci_irq again for extcon since the first
+ * interrupt (wakeup int) only let the controller be out of
+ * low power mode, but not handle any interrupts.
+ */
+static void ci_extcon_wakeup_int(struct ci_hdrc *ci)
+{
+	struct ci_hdrc_cable *cable_id, *cable_vbus;
+	u32 otgsc = hw_read_otgsc(ci, ~0);
+
+	cable_id = &ci->platdata->id_extcon;
+	cable_vbus = &ci->platdata->vbus_extcon;
+
+	if (!IS_ERR(cable_id->edev) && ci->is_otg &&
+		(otgsc & OTGSC_IDIE) && (otgsc & OTGSC_IDIS))
+		ci_irq(ci->irq, ci);
+
+	if (!IS_ERR(cable_vbus->edev) && ci->is_otg &&
+		(otgsc & OTGSC_BSVIE) && (otgsc & OTGSC_BSVIS))
+		ci_irq(ci->irq, ci);
+}
+
 static int ci_controller_resume(struct device *dev)
 {
 	struct ci_hdrc *ci = dev_get_drvdata(dev);
@@ -1293,6 +1318,7 @@ static int ci_controller_resume(struct device *dev)
 		enable_irq(ci->irq);
 		if (ci_otg_is_fsm_mode(ci))
 			ci_otg_fsm_wakeup_by_srp(ci);
+		ci_extcon_wakeup_int(ci);
 	}
 
 	return 0;
