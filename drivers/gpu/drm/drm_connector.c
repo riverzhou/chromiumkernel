@@ -29,6 +29,7 @@
 #include <drm/drm_print.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_file.h>
+#include <drm/drm_sysfs.h>
 
 #include <linux/uaccess.h>
 
@@ -470,8 +471,6 @@ EXPORT_SYMBOL(drm_connector_attach_edid_property);
 int drm_connector_attach_encoder(struct drm_connector *connector,
 				 struct drm_encoder *encoder)
 {
-	int i;
-
 	/*
 	 * In the past, drivers have attempted to model the static association
 	 * of connector to encoder in simple connector/encoder devices using a
@@ -486,18 +485,15 @@ int drm_connector_attach_encoder(struct drm_connector *connector,
 	if (WARN_ON(connector->encoder))
 		return -EINVAL;
 
-	for (i = 0; i < ARRAY_SIZE(connector->encoder_ids); i++) {
-		if (connector->encoder_ids[i] == 0) {
-			connector->encoder_ids[i] = encoder->base.id;
-			return 0;
-		}
-	}
-	return -ENOMEM;
+	connector->possible_encoders |= drm_encoder_mask(encoder);
+
+	return 0;
 }
 EXPORT_SYMBOL(drm_connector_attach_encoder);
 
 /**
- * drm_connector_has_possible_encoder - check if the connector and encoder are assosicated with each other
+ * drm_connector_has_possible_encoder - check if the connector and encoder are
+ * associated with each other
  * @connector: the connector
  * @encoder: the encoder
  *
@@ -507,15 +503,7 @@ EXPORT_SYMBOL(drm_connector_attach_encoder);
 bool drm_connector_has_possible_encoder(struct drm_connector *connector,
 					struct drm_encoder *encoder)
 {
-	struct drm_encoder *enc;
-	int i;
-
-	drm_connector_for_each_possible_encoder(connector, enc, i) {
-		if (enc == encoder)
-			return true;
-	}
-
-	return false;
+	return connector->possible_encoders & drm_encoder_mask(encoder);
 }
 EXPORT_SYMBOL(drm_connector_has_possible_encoder);
 
@@ -616,6 +604,10 @@ int drm_connector_register(struct drm_connector *connector)
 	drm_mode_object_register(connector->dev, &connector->base);
 
 	connector->registration_state = DRM_CONNECTOR_REGISTERED;
+
+	/* Let userspace know we have a new connector */
+	drm_sysfs_hotplug_event(connector->dev);
+
 	goto unlock;
 
 err_debugfs:
@@ -985,6 +977,38 @@ static const struct drm_prop_enum_list hdmi_colorspaces[] = {
 	/* Added as part of Additional Colorimetry Extension in 861.G */
 	{ DRM_MODE_COLORIMETRY_DCI_P3_RGB_D65, "DCI-P3_RGB_D65" },
 	{ DRM_MODE_COLORIMETRY_DCI_P3_RGB_THEATER, "DCI-P3_RGB_Theater" },
+};
+
+/*
+ * As per DP 1.4a spec, 2.2.5.7.5 VSC SDP Payload for Pixel Encoding/Colorimetry
+ * Format Table 2-120
+ */
+static const struct drm_prop_enum_list dp_colorspaces[] = {
+	/* For Default case, driver will set the colorspace */
+	{ DRM_MODE_COLORIMETRY_DEFAULT, "Default" },
+	{ DRM_MODE_COLORIMETRY_RGB_WIDE_FIXED, "RGB_Wide_Gamut_Fixed_Point" },
+	/* Colorimetry based on scRGB (IEC 61966-2-2) */
+	{ DRM_MODE_COLORIMETRY_RGB_WIDE_FLOAT, "RGB_Wide_Gamut_Floating_Point" },
+	/* Colorimetry based on IEC 61966-2-5 */
+	{ DRM_MODE_COLORIMETRY_OPRGB, "opRGB" },
+	/* Colorimetry based on SMPTE RP 431-2 */
+	{ DRM_MODE_COLORIMETRY_DCI_P3_RGB_D65, "DCI-P3_RGB_D65" },
+	/* Colorimetry based on ITU-R BT.2020 */
+	{ DRM_MODE_COLORIMETRY_BT2020_RGB, "BT2020_RGB" },
+	{ DRM_MODE_COLORIMETRY_BT601_YCC, "BT601_YCC" },
+	{ DRM_MODE_COLORIMETRY_BT709_YCC, "BT709_YCC" },
+	/* Standard Definition Colorimetry based on IEC 61966-2-4 */
+	{ DRM_MODE_COLORIMETRY_XVYCC_601, "XVYCC_601" },
+	/* High Definition Colorimetry based on IEC 61966-2-4 */
+	{ DRM_MODE_COLORIMETRY_XVYCC_709, "XVYCC_709" },
+	/* Colorimetry based on IEC 61966-2-1/Amendment 1 */
+	{ DRM_MODE_COLORIMETRY_SYCC_601, "SYCC_601" },
+	/* Colorimetry based on IEC 61966-2-5 [33] */
+	{ DRM_MODE_COLORIMETRY_OPYCC_601, "opYCC_601" },
+	/* Colorimetry based on ITU-R BT.2020 */
+	{ DRM_MODE_COLORIMETRY_BT2020_CYCC, "BT2020_CYCC" },
+	/* Colorimetry based on ITU-R BT.2020 */
+	{ DRM_MODE_COLORIMETRY_BT2020_YCC, "BT2020_YCC" },
 };
 
 /**
@@ -1799,7 +1823,8 @@ EXPORT_SYMBOL(drm_mode_create_aspect_ratio_property);
  *        source is trying to drive.
  *
  * Because between HDMI and DP have different colorspaces,
- * drm_mode_create_hdmi_colorspace_property() is used for HDMI connector.
+ * drm_mode_create_hdmi_colorspace_property() is used for HDMI connector and
+ * drm_mode_create_dp_colorspace_property() is used for DP connector.
  */
 
 /**
@@ -1830,6 +1855,35 @@ int drm_mode_create_hdmi_colorspace_property(struct drm_connector *connector)
 	return 0;
 }
 EXPORT_SYMBOL(drm_mode_create_hdmi_colorspace_property);
+
+/**
+ * drm_mode_create_dp_colorspace_property - create dp colorspace property
+ * @connector: connector to create the Colorspace property on.
+ *
+ * Called by a driver the first time it's needed, must be attached to desired
+ * DP connectors.
+ *
+ * Returns:
+ * Zero on success, negative errono on failure.
+ */
+int drm_mode_create_dp_colorspace_property(struct drm_connector *connector)
+{
+	struct drm_device *dev = connector->dev;
+
+	if (connector->colorspace_property)
+		return 0;
+
+	connector->colorspace_property =
+		drm_property_create_enum(dev, DRM_MODE_PROP_ENUM, "Colorspace",
+					 dp_colorspaces,
+					 ARRAY_SIZE(dp_colorspaces));
+
+	if (!connector->colorspace_property)
+		return -ENOMEM;
+
+	return 0;
+}
+EXPORT_SYMBOL(drm_mode_create_dp_colorspace_property);
 
 /**
  * drm_mode_create_content_type_property - create content type property
@@ -2252,7 +2306,6 @@ int drm_mode_getconnector(struct drm_device *dev, void *data,
 	int encoders_count = 0;
 	int ret = 0;
 	int copied = 0;
-	int i;
 	struct drm_mode_modeinfo u_mode;
 	struct drm_mode_modeinfo __user *mode_ptr;
 	uint32_t __user *encoder_ptr;
@@ -2267,14 +2320,13 @@ int drm_mode_getconnector(struct drm_device *dev, void *data,
 	if (!connector)
 		return -ENOENT;
 
-	drm_connector_for_each_possible_encoder(connector, encoder, i)
-		encoders_count++;
+	encoders_count = hweight32(connector->possible_encoders);
 
 	if ((out_resp->count_encoders >= encoders_count) && encoders_count) {
 		copied = 0;
 		encoder_ptr = (uint32_t __user *)(unsigned long)(out_resp->encoders_ptr);
 
-		drm_connector_for_each_possible_encoder(connector, encoder, i) {
+		drm_connector_for_each_possible_encoder(connector, encoder) {
 			if (put_user(encoder->base.id, encoder_ptr + copied)) {
 				ret = -EFAULT;
 				goto out;

@@ -162,38 +162,36 @@ static int iwl_dbg_tlv_alloc_buf_alloc(struct iwl_trans *trans,
 				       struct iwl_ucode_tlv *tlv)
 {
 	struct iwl_fw_ini_allocation_tlv *alloc = (void *)tlv->data;
-	u32 buf_location = le32_to_cpu(alloc->buf_location);
-	u32 alloc_id = le32_to_cpu(alloc->alloc_id);
+	u32 buf_location;
+	u32 alloc_id;
 
-	if (le32_to_cpu(tlv->length) != sizeof(*alloc) ||
-	    (buf_location != IWL_FW_INI_LOCATION_SRAM_PATH &&
-	     buf_location != IWL_FW_INI_LOCATION_DRAM_PATH &&
-	     buf_location != IWL_FW_INI_LOCATION_NPK_PATH)) {
-		IWL_ERR(trans,
-			"WRT: Invalid allocation TLV\n");
+	if (le32_to_cpu(tlv->length) != sizeof(*alloc))
 		return -EINVAL;
-	}
+
+	buf_location = le32_to_cpu(alloc->buf_location);
+	alloc_id = le32_to_cpu(alloc->alloc_id);
+
+	if (buf_location == IWL_FW_INI_LOCATION_INVALID ||
+	    buf_location >= IWL_FW_INI_LOCATION_NUM)
+		goto err;
+
+	if (alloc_id == IWL_FW_INI_ALLOCATION_INVALID ||
+	    alloc_id >= IWL_FW_INI_ALLOCATION_NUM)
+		goto err;
 
 	if ((buf_location == IWL_FW_INI_LOCATION_SRAM_PATH ||
 	     buf_location == IWL_FW_INI_LOCATION_NPK_PATH) &&
-	     alloc_id != IWL_FW_INI_ALLOCATION_ID_DBGC1) {
-		IWL_ERR(trans,
-			"WRT: Allocation TLV for SMEM/NPK path must have id %u (current: %u)\n",
-			IWL_FW_INI_ALLOCATION_ID_DBGC1, alloc_id);
-		return -EINVAL;
-	}
-
-	if (alloc_id == IWL_FW_INI_ALLOCATION_INVALID ||
-	    alloc_id >= IWL_FW_INI_ALLOCATION_NUM) {
-		IWL_ERR(trans,
-			"WRT: Invalid allocation id %u for allocation TLV\n",
-			alloc_id);
-		return -EINVAL;
-	}
+	     alloc_id != IWL_FW_INI_ALLOCATION_ID_DBGC1)
+		goto err;
 
 	trans->dbg.fw_mon_cfg[alloc_id] = *alloc;
 
 	return 0;
+err:
+	IWL_ERR(trans,
+		"WRT: Invalid allocation id %u and/or location id %u for allocation TLV\n",
+		alloc_id, buf_location);
+	return -EINVAL;
 }
 
 static int iwl_dbg_tlv_alloc_hcmd(struct iwl_trans *trans,
@@ -231,6 +229,13 @@ static int iwl_dbg_tlv_alloc_region(struct iwl_trans *trans,
 
 	if (le32_to_cpu(tlv->length) < sizeof(*reg))
 		return -EINVAL;
+
+	/* For safe using a string from FW make sure we have a
+	 * null terminator
+	 */
+	reg->name[IWL_FW_INI_MAX_NAME - 1] = 0;
+
+	IWL_DEBUG_FW(trans, "WRT: parsing region: %s\n", reg->name);
 
 	if (id >= IWL_FW_INI_MAX_REGION_ID) {
 		IWL_ERR(trans, "WRT: Invalid region id %u\n", id);
@@ -467,7 +472,7 @@ void iwl_dbg_tlv_load_bin(struct device *dev, struct iwl_trans *trans)
 	if (!iwlwifi_mod_params.enable_ini)
 		return;
 
-	res = request_firmware(&fw, "iwl-debug-yoyo.bin", dev);
+	res = firmware_request_nowarn(&fw, "iwl-debug-yoyo.bin", dev);
 	if (res)
 		return;
 
@@ -934,9 +939,8 @@ static bool iwl_dbg_tlv_check_fw_pkt(struct iwl_fw_runtime *fwrt,
 	struct iwl_rx_packet *pkt = tp_data->fw_pkt;
 	struct iwl_cmd_header *wanted_hdr = (void *)&trig_data;
 
-	if (pkt && ((wanted_hdr->cmd == 0 && wanted_hdr->group_id == 0) ||
-		    (pkt->hdr.cmd == wanted_hdr->cmd &&
-		     pkt->hdr.group_id == wanted_hdr->group_id))) {
+	if (pkt && (pkt->hdr.cmd == wanted_hdr->cmd &&
+		    pkt->hdr.group_id == wanted_hdr->group_id)) {
 		struct iwl_rx_packet *fw_pkt =
 			kmemdup(pkt,
 				sizeof(*pkt) + iwl_rx_packet_payload_len(pkt),
@@ -998,6 +1002,9 @@ static void iwl_dbg_tlv_init_cfg(struct iwl_fw_runtime *fwrt)
 {
 	enum iwl_fw_ini_buffer_location *ini_dest = &fwrt->trans->dbg.ini_dest;
 	int ret, i;
+
+	if (*ini_dest != IWL_FW_INI_LOCATION_INVALID)
+		return;
 
 	IWL_DEBUG_FW(fwrt,
 		     "WRT: Generating active triggers list, domain 0x%x\n",
