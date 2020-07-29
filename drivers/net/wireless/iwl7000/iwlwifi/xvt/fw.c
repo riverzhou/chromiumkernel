@@ -5,9 +5,8 @@
  *
  * GPL LICENSE SUMMARY
  *
- * Copyright(c) 2007 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2015 - 2017 Intel Deutschland GmbH
- * Copyright (C) 2018 - 2019 Intel Corporation
+ * Copyright (C) 2007 - 2014, 2018 - 2020 Intel Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -27,9 +26,8 @@
  *
  * BSD LICENSE
  *
- * Copyright(c) 2005 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2015 - 2017 Intel Deutschland GmbH
- * Copyright (C) 2018 - 2019 Intel Corporation
+ * Copyright (C) 2005 - 2014, 2018 - 2020 Intel Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -110,8 +108,6 @@ static bool iwl_alive_fn(struct iwl_notif_wait_data *notif_wait,
 	u16 status, flags;
 	u32 lmac_error_event_table, umac_error_event_table;
 
-	xvt->support_umac_log = false;
-
 	if (rx_packet_payload_size == sizeof(*palive2)) {
 
 		palive2 = (void *)pkt->data;
@@ -126,8 +122,6 @@ static bool iwl_alive_fn(struct iwl_notif_wait_data *notif_wait,
 				  palive2->ucode_minor);
 		umac_error_event_table =
 			le32_to_cpu(palive2->error_info_addr);
-		if (umac_error_event_table)
-			xvt->support_umac_log = true;
 
 		IWL_DEBUG_FW(xvt,
 			     "Alive VER2 ucode status 0x%04x revision 0x%01X "
@@ -175,8 +169,6 @@ static bool iwl_alive_fn(struct iwl_notif_wait_data *notif_wait,
 				  le32_to_cpu(lmac1->ucode_minor));
 		umac_error_event_table =
 			le32_to_cpu(umac->dbg_ptrs.error_info_addr);
-		if (umac_error_event_table)
-			xvt->support_umac_log = true;
 
 		IWL_DEBUG_FW(xvt,
 			     "status 0x%04x rev 0x%01X 0x%01X flags 0x%01X\n",
@@ -188,7 +180,7 @@ static bool iwl_alive_fn(struct iwl_notif_wait_data *notif_wait,
 	}
 
 	iwl_fw_lmac1_set_alive_err_table(xvt->trans, lmac_error_event_table);
-	if (xvt->support_umac_log)
+	if (umac_error_event_table)
 		iwl_fw_umac_set_alive_err_table(xvt->trans,
 						umac_error_event_table);
 
@@ -286,6 +278,9 @@ static int iwl_xvt_load_ucode_wait_alive(struct iwl_xvt *xvt,
 	}
 
 	xvt->fw_running = true;
+#ifdef CPTCFG_IWLWIFI_DEBUGFS
+	iwl_fw_set_dbg_rec_on(&xvt->fwrt);
+#endif
 
 	return 0;
 }
@@ -352,6 +347,8 @@ int iwl_xvt_run_fw(struct iwl_xvt *xvt, u32 ucode_type)
 				CSR_HW_IF_CONFIG_REG_BIT_MAC_SI,
 				CSR_HW_IF_CONFIG_REG_BIT_MAC_SI);
 
+	iwl_dbg_tlv_time_point(&xvt->fwrt, IWL_FW_INI_TIME_POINT_EARLY, NULL);
+
 	/* Will also start the device */
 	ret = iwl_xvt_load_ucode_wait_alive(xvt, ucode_type);
 	if (ret) {
@@ -362,6 +359,8 @@ int iwl_xvt_run_fw(struct iwl_xvt *xvt, u32 ucode_type)
 
 	iwl_dbg_tlv_time_point(&xvt->fwrt, IWL_FW_INI_TIME_POINT_AFTER_ALIVE,
 			       NULL);
+
+	iwl_get_shared_mem_conf(&xvt->fwrt);
 
 	if (iwl_xvt_is_unified_fw(xvt)) {
 		ret = iwl_xvt_send_extended_config(xvt);

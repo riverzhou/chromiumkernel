@@ -832,11 +832,25 @@ void kvm_load_guest_xcr0(struct kvm_vcpu *vcpu)
 			xsetbv(XCR_XFEATURE_ENABLED_MASK, vcpu->arch.xcr0);
 		vcpu->guest_xcr0_loaded = 1;
 	}
+
+	if (static_cpu_has(X86_FEATURE_PKU) &&
+	    (kvm_read_cr4_bits(vcpu, X86_CR4_PKE) ||
+	     (vcpu->arch.xcr0 & XFEATURE_MASK_PKRU)) &&
+	    vcpu->arch.pkru != vcpu->arch.host_pkru)
+		__write_pkru(vcpu->arch.pkru);
 }
 EXPORT_SYMBOL_GPL(kvm_load_guest_xcr0);
 
 void kvm_put_guest_xcr0(struct kvm_vcpu *vcpu)
 {
+	if (static_cpu_has(X86_FEATURE_PKU) &&
+	    (kvm_read_cr4_bits(vcpu, X86_CR4_PKE) ||
+	     (vcpu->arch.xcr0 & XFEATURE_MASK_PKRU))) {
+		vcpu->arch.pkru = rdpkru();
+		if (vcpu->arch.pkru != vcpu->arch.host_pkru)
+			__write_pkru(vcpu->arch.host_pkru);
+	}
+
 	if (vcpu->guest_xcr0_loaded) {
 		if (vcpu->arch.xcr0 != host_xcr0)
 			xsetbv(XCR_XFEATURE_ENABLED_MASK, host_xcr0);
@@ -965,6 +979,8 @@ int kvm_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 
 	if (is_long_mode(vcpu)) {
 		if (!(cr4 & X86_CR4_PAE))
+			return 1;
+		if ((cr4 ^ old_cr4) & X86_CR4_LA57)
 			return 1;
 	} else if (is_paging(vcpu) && (cr4 & X86_CR4_PAE)
 		   && ((cr4 ^ old_cr4) & pdptr_bits)
@@ -1602,19 +1618,23 @@ static int do_set_msr(struct kvm_vcpu *vcpu, unsigned index, u64 *data)
 }
 
 #ifdef CONFIG_X86_64
+struct pvclock_clock {
+	int vclock_mode;
+	u64 cycle_last;
+	u64 mask;
+	u32 mult;
+	u32 shift;
+	u64 base_cycles;
+	u64 offset;
+};
+
 struct pvclock_gtod_data {
 	seqcount_t	seq;
 
-	struct { /* extract of a clocksource struct */
-		int vclock_mode;
-		u64	cycle_last;
-		u64	mask;
-		u32	mult;
-		u32	shift;
-	} clock;
+	struct pvclock_clock clock; /* extract of a clocksource struct */
+	struct pvclock_clock raw_clock; /* extract of a clocksource struct */
 
-	u64		boot_ns;
-	u64		nsec_base;
+	ktime_t		offs_boot;
 	u64		wall_time_sec;
 };
 
@@ -1623,25 +1643,43 @@ static struct pvclock_gtod_data pvclock_gtod_data;
 static void update_pvclock_gtod(struct timekeeper *tk)
 {
 	struct pvclock_gtod_data *vdata = &pvclock_gtod_data;
-	u64 boot_ns;
-
-	boot_ns = ktime_to_ns(ktime_add(tk->tkr_mono.base, tk->offs_boot));
 
 	write_seqcount_begin(&vdata->seq);
 
 	/* copy pvclock gtod data */
-	vdata->clock.vclock_mode	= tk->tkr_mono.clock->archdata.vclock_mode;
+	vdata->clock.vclock_mode	= tk->tkr_mono.clock->vdso_clock_mode;
 	vdata->clock.cycle_last		= tk->tkr_mono.cycle_last;
 	vdata->clock.mask		= tk->tkr_mono.mask;
 	vdata->clock.mult		= tk->tkr_mono.mult;
 	vdata->clock.shift		= tk->tkr_mono.shift;
+	vdata->clock.base_cycles	= tk->tkr_mono.xtime_nsec;
+	vdata->clock.offset		= tk->tkr_mono.base;
 
-	vdata->boot_ns			= boot_ns;
-	vdata->nsec_base		= tk->tkr_mono.xtime_nsec;
+	vdata->raw_clock.vclock_mode	= tk->tkr_raw.clock->vdso_clock_mode;
+	vdata->raw_clock.cycle_last	= tk->tkr_raw.cycle_last;
+	vdata->raw_clock.mask		= tk->tkr_raw.mask;
+	vdata->raw_clock.mult		= tk->tkr_raw.mult;
+	vdata->raw_clock.shift		= tk->tkr_raw.shift;
+	vdata->raw_clock.base_cycles	= tk->tkr_raw.xtime_nsec;
+	vdata->raw_clock.offset		= tk->tkr_raw.base;
 
 	vdata->wall_time_sec            = tk->xtime_sec;
 
+	vdata->offs_boot		= tk->offs_boot;
+
 	write_seqcount_end(&vdata->seq);
+}
+
+static s64 get_kvmclock_base_ns(void)
+{
+	/* Count up from boot time, but with the frequency of the raw clock.  */
+	return ktime_to_ns(ktime_add(ktime_get_raw(), pvclock_gtod_data.offs_boot));
+}
+#else
+static s64 get_kvmclock_base_ns(void)
+{
+	/* Master clock not used, so we can just use CLOCK_BOOTTIME.  */
+	return ktime_get_boottime_ns();
 }
 #endif
 
@@ -1656,7 +1694,7 @@ static void kvm_write_wall_clock(struct kvm *kvm, gpa_t wall_clock)
 	int version;
 	int r;
 	struct pvclock_wall_clock wc;
-	struct timespec64 boot;
+	u64 wall_nsec;
 
 	if (!wall_clock)
 		return;
@@ -1676,17 +1714,12 @@ static void kvm_write_wall_clock(struct kvm *kvm, gpa_t wall_clock)
 	/*
 	 * The guest calculates current wall clock time by adding
 	 * system time (updated by kvm_guest_time_update below) to the
-	 * wall clock specified here.  guest system time equals host
-	 * system time for us, thus we must fill in host boot time here.
+	 * wall clock specified here.  We do the reverse here.
 	 */
-	getboottime64(&boot);
+	wall_nsec = ktime_get_real_ns() - get_kvmclock_ns(kvm);
 
-	if (kvm->arch.kvmclock_offset) {
-		struct timespec64 ts = ns_to_timespec64(kvm->arch.kvmclock_offset);
-		boot = timespec64_sub(boot, ts);
-	}
-	wc.sec = (u32)boot.tv_sec; /* overflow in 2106 guest time */
-	wc.nsec = boot.tv_nsec;
+	wc.nsec = do_div(wall_nsec, 1000000000);
+	wc.sec = (u32)wall_nsec; /* overflow in 2106 guest time */
 	wc.version = version;
 
 	kvm_write_guest(kvm, wall_clock, &wc, sizeof(wc));
@@ -1823,7 +1856,7 @@ static u64 compute_guest_tsc(struct kvm_vcpu *vcpu, s64 kernel_ns)
 
 static inline int gtod_is_based_on_tsc(int mode)
 {
-	return mode == VCLOCK_TSC || mode == VCLOCK_HVCLOCK;
+	return mode == VDSO_CLOCKMODE_TSC || mode == VDSO_CLOCKMODE_HVCLOCK;
 }
 
 static void kvm_track_tsc_matching(struct kvm_vcpu *vcpu)
@@ -1916,7 +1949,7 @@ static inline bool kvm_check_tsc_unstable(void)
 	 * TSC is marked unstable when we're running on Hyper-V,
 	 * 'TSC page' clocksource is good.
 	 */
-	if (pvclock_gtod_data.clock.vclock_mode == VCLOCK_HVCLOCK)
+	if (pvclock_gtod_data.clock.vclock_mode == VDSO_CLOCKMODE_HVCLOCK)
 		return false;
 #endif
 	return check_tsc_unstable();
@@ -1934,7 +1967,7 @@ void kvm_write_tsc(struct kvm_vcpu *vcpu, struct msr_data *msr)
 
 	raw_spin_lock_irqsave(&kvm->arch.tsc_write_lock, flags);
 	offset = kvm_compute_tsc_offset(vcpu, data);
-	ns = ktime_get_boottime_ns();
+	ns = get_kvmclock_base_ns();
 	elapsed = ns - kvm->arch.last_tsc_nsec;
 
 	if (vcpu->arch.virtual_tsc_khz) {
@@ -2064,43 +2097,43 @@ static u64 read_tsc(void)
 	return last;
 }
 
-static inline u64 vgettsc(u64 *tsc_timestamp, int *mode)
+static inline u64 vgettsc(struct pvclock_clock *clock, u64 *tsc_timestamp,
+			  int *mode)
 {
 	long v;
-	struct pvclock_gtod_data *gtod = &pvclock_gtod_data;
 	u64 tsc_pg_val;
 
-	switch (gtod->clock.vclock_mode) {
-	case VCLOCK_HVCLOCK:
+	switch (clock->vclock_mode) {
+	case VDSO_CLOCKMODE_HVCLOCK:
 		tsc_pg_val = hv_read_tsc_page_tsc(hv_get_tsc_page(),
 						  tsc_timestamp);
 		if (tsc_pg_val != U64_MAX) {
 			/* TSC page valid */
-			*mode = VCLOCK_HVCLOCK;
-			v = (tsc_pg_val - gtod->clock.cycle_last) &
-				gtod->clock.mask;
+			*mode = VDSO_CLOCKMODE_HVCLOCK;
+			v = (tsc_pg_val - clock->cycle_last) &
+				clock->mask;
 		} else {
 			/* TSC page invalid */
-			*mode = VCLOCK_NONE;
+			*mode = VDSO_CLOCKMODE_NONE;
 		}
 		break;
-	case VCLOCK_TSC:
-		*mode = VCLOCK_TSC;
+	case VDSO_CLOCKMODE_TSC:
+		*mode = VDSO_CLOCKMODE_TSC;
 		*tsc_timestamp = read_tsc();
-		v = (*tsc_timestamp - gtod->clock.cycle_last) &
-			gtod->clock.mask;
+		v = (*tsc_timestamp - clock->cycle_last) &
+			clock->mask;
 		break;
 	default:
-		*mode = VCLOCK_NONE;
+		*mode = VDSO_CLOCKMODE_NONE;
 	}
 
-	if (*mode == VCLOCK_NONE)
+	if (*mode == VDSO_CLOCKMODE_NONE)
 		*tsc_timestamp = v = 0;
 
-	return v * gtod->clock.mult;
+	return v * clock->mult;
 }
 
-static int do_monotonic_boot(s64 *t, u64 *tsc_timestamp)
+static int do_monotonic_raw(s64 *t, u64 *tsc_timestamp)
 {
 	struct pvclock_gtod_data *gtod = &pvclock_gtod_data;
 	unsigned long seq;
@@ -2109,10 +2142,10 @@ static int do_monotonic_boot(s64 *t, u64 *tsc_timestamp)
 
 	do {
 		seq = read_seqcount_begin(&gtod->seq);
-		ns = gtod->nsec_base;
-		ns += vgettsc(tsc_timestamp, &mode);
-		ns >>= gtod->clock.shift;
-		ns += gtod->boot_ns;
+		ns = gtod->raw_clock.base_cycles;
+		ns += vgettsc(&gtod->raw_clock, tsc_timestamp, &mode);
+		ns >>= gtod->raw_clock.shift;
+		ns += ktime_to_ns(ktime_add(gtod->raw_clock.offset, gtod->offs_boot));
 	} while (unlikely(read_seqcount_retry(&gtod->seq, seq)));
 	*t = ns;
 
@@ -2129,8 +2162,8 @@ static int do_realtime(struct timespec64 *ts, u64 *tsc_timestamp)
 	do {
 		seq = read_seqcount_begin(&gtod->seq);
 		ts->tv_sec = gtod->wall_time_sec;
-		ns = gtod->nsec_base;
-		ns += vgettsc(tsc_timestamp, &mode);
+		ns = gtod->clock.base_cycles;
+		ns += vgettsc(&gtod->clock, tsc_timestamp, &mode);
 		ns >>= gtod->clock.shift;
 	} while (unlikely(read_seqcount_retry(&gtod->seq, seq)));
 
@@ -2147,7 +2180,7 @@ static bool kvm_get_time_and_clockread(s64 *kernel_ns, u64 *tsc_timestamp)
 	if (!gtod_is_based_on_tsc(pvclock_gtod_data.clock.vclock_mode))
 		return false;
 
-	return gtod_is_based_on_tsc(do_monotonic_boot(kernel_ns,
+	return gtod_is_based_on_tsc(do_monotonic_raw(kernel_ns,
 						      tsc_timestamp));
 }
 
@@ -2272,7 +2305,7 @@ u64 get_kvmclock_ns(struct kvm *kvm)
 	spin_lock(&ka->pvclock_gtod_sync_lock);
 	if (!ka->use_master_clock) {
 		spin_unlock(&ka->pvclock_gtod_sync_lock);
-		return ktime_get_boottime_ns() + ka->kvmclock_offset;
+		return get_kvmclock_base_ns() + ka->kvmclock_offset;
 	}
 
 	hv_clock.tsc_timestamp = ka->master_cycle_now;
@@ -2288,7 +2321,7 @@ u64 get_kvmclock_ns(struct kvm *kvm)
 				   &hv_clock.tsc_to_system_mul);
 		ret = __pvclock_read_cycles(&hv_clock, rdtsc());
 	} else
-		ret = ktime_get_boottime_ns() + ka->kvmclock_offset;
+		ret = get_kvmclock_base_ns() + ka->kvmclock_offset;
 
 	put_cpu();
 
@@ -2387,7 +2420,7 @@ static int kvm_guest_time_update(struct kvm_vcpu *v)
 	}
 	if (!use_master_clock) {
 		host_tsc = rdtsc();
-		kernel_ns = ktime_get_boottime_ns();
+		kernel_ns = get_kvmclock_base_ns();
 	}
 
 	tsc_timestamp = kvm_read_l1_tsc(v, host_tsc);
@@ -2427,6 +2460,7 @@ static int kvm_guest_time_update(struct kvm_vcpu *v)
 	vcpu->hv_clock.tsc_timestamp = tsc_timestamp;
 	vcpu->hv_clock.system_time = kernel_ns + v->kvm->arch.kvmclock_offset;
 	vcpu->last_guest_tsc = tsc_timestamp;
+	WARN_ON(vcpu->hv_clock.system_time < 0);
 
 	/* If the host uses TSC clocksource, then it is stable */
 	pvclock_flags = 0;
@@ -2739,7 +2773,7 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		return kvm_mtrr_set_msr(vcpu, msr, data);
 	case MSR_IA32_APICBASE:
 		return kvm_set_apic_base(vcpu, msr_info);
-	case APIC_BASE_MSR ... APIC_BASE_MSR + 0x3ff:
+	case APIC_BASE_MSR ... APIC_BASE_MSR + 0xff:
 		return kvm_x2apic_msr_write(vcpu, msr, data);
 	case MSR_IA32_TSCDEADLINE:
 		kvm_set_lapic_tscdeadline_msr(vcpu, data);
@@ -3043,7 +3077,7 @@ int kvm_get_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_IA32_APICBASE:
 		msr_info->data = kvm_get_apic_base(vcpu);
 		break;
-	case APIC_BASE_MSR ... APIC_BASE_MSR + 0x3ff:
+	case APIC_BASE_MSR ... APIC_BASE_MSR + 0xff:
 		return kvm_x2apic_msr_read(vcpu, msr_info->index, &msr_info->data);
 		break;
 	case MSR_IA32_TSCDEADLINE:
@@ -3682,7 +3716,7 @@ static int kvm_vcpu_ioctl_x86_setup_mce(struct kvm_vcpu *vcpu,
 	unsigned bank_num = mcg_cap & 0xff, bank;
 
 	r = -EINVAL;
-	if (!bank_num || bank_num >= KVM_MAX_MCE_BANKS)
+	if (!bank_num || bank_num > KVM_MAX_MCE_BANKS)
 		goto out;
 	if (mcg_cap & ~(kvm_mce_cap_supported | 0xff | 0xff0000))
 		goto out;
@@ -6819,7 +6853,7 @@ restart:
 		if (!ctxt->have_exception ||
 		    exception_type(ctxt->exception.vector) == EXCPT_TRAP) {
 			kvm_rip_write(vcpu, ctxt->eip);
-			if (r && ctxt->tf)
+			if (r && (ctxt->tf || (vcpu->guest_debug & KVM_GUESTDBG_SINGLESTEP)))
 				r = kvm_vcpu_do_singlestep(vcpu);
 			__kvm_set_rflags(vcpu, ctxt->eflags);
 		}
@@ -7555,7 +7589,7 @@ static void update_cr8_intercept(struct kvm_vcpu *vcpu)
 	kvm_x86_ops->update_cr8_intercept(vcpu, tpr, max_irr);
 }
 
-static int inject_pending_event(struct kvm_vcpu *vcpu, bool req_int_win)
+static int inject_pending_event(struct kvm_vcpu *vcpu)
 {
 	int r;
 
@@ -7591,7 +7625,7 @@ static int inject_pending_event(struct kvm_vcpu *vcpu, bool req_int_win)
 	 * from L2 to L1.
 	 */
 	if (is_guest_mode(vcpu) && kvm_x86_ops->check_nested_events) {
-		r = kvm_x86_ops->check_nested_events(vcpu, req_int_win);
+		r = kvm_x86_ops->check_nested_events(vcpu);
 		if (r != 0)
 			return r;
 	}
@@ -7653,7 +7687,7 @@ static int inject_pending_event(struct kvm_vcpu *vcpu, bool req_int_win)
 		 * KVM_REQ_EVENT only on certain events and not unconditionally?
 		 */
 		if (is_guest_mode(vcpu) && kvm_x86_ops->check_nested_events) {
-			r = kvm_x86_ops->check_nested_events(vcpu, req_int_win);
+			r = kvm_x86_ops->check_nested_events(vcpu);
 			if (r != 0)
 				return r;
 		}
@@ -7964,9 +7998,8 @@ static void vcpu_load_eoi_exitmap(struct kvm_vcpu *vcpu)
 	kvm_x86_ops->load_eoi_exitmap(vcpu, eoi_exit_bitmap);
 }
 
-int kvm_arch_mmu_notifier_invalidate_range(struct kvm *kvm,
-		unsigned long start, unsigned long end,
-		bool blockable)
+void kvm_arch_mmu_notifier_invalidate_range(struct kvm *kvm,
+					    unsigned long start, unsigned long end)
 {
 	unsigned long apic_address;
 
@@ -7977,8 +8010,6 @@ int kvm_arch_mmu_notifier_invalidate_range(struct kvm *kvm,
 	apic_address = gfn_to_hva(kvm, APIC_DEFAULT_PHYS_BASE >> PAGE_SHIFT);
 	if (start <= apic_address && apic_address < end)
 		kvm_make_all_cpus_request(kvm, KVM_REQ_APIC_PAGE_RELOAD);
-
-	return 0;
 }
 
 void kvm_vcpu_reload_apic_access_page(struct kvm_vcpu *vcpu)
@@ -8130,7 +8161,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 			goto out;
 		}
 
-		if (inject_pending_event(vcpu, req_int_win) != 0)
+		if (inject_pending_event(vcpu) != 0)
 			req_immediate_exit = true;
 		else {
 			/* Enable SMI/NMI/IRQ window open exits if needed.
@@ -8221,6 +8252,9 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 
 	trace_kvm_entry(vcpu->vcpu_id);
 	guest_enter_irqoff();
+
+	/* Save host pkru register if supported */
+	vcpu->arch.host_pkru = read_pkru();
 
 	fpregs_assert_state_consistent();
 	if (test_thread_flag(TIF_NEED_FPU_LOAD))
@@ -8360,7 +8394,7 @@ static inline int vcpu_block(struct kvm *kvm, struct kvm_vcpu *vcpu)
 static inline bool kvm_vcpu_running(struct kvm_vcpu *vcpu)
 {
 	if (is_guest_mode(vcpu) && kvm_x86_ops->check_nested_events)
-		kvm_x86_ops->check_nested_events(vcpu, false);
+		kvm_x86_ops->check_nested_events(vcpu);
 
 	return (vcpu->arch.mp_state == KVM_MP_STATE_RUNNABLE &&
 		!vcpu->arch.apf.halted);
@@ -9548,7 +9582,7 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	mutex_init(&kvm->arch.apic_map_lock);
 	spin_lock_init(&kvm->arch.pvclock_gtod_sync_lock);
 
-	kvm->arch.kvmclock_offset = -ktime_get_boottime_ns();
+	kvm->arch.kvmclock_offset = -get_kvmclock_base_ns();
 	pvclock_update_vm_gtod_copy(kvm);
 
 	kvm->arch.guest_can_read_msr_platform_info = true;
@@ -9726,6 +9760,13 @@ int kvm_arch_create_memslot(struct kvm *kvm, struct kvm_memory_slot *slot,
 {
 	int i;
 
+	/*
+	 * Clear out the previous array pointers for the KVM_MR_MOVE case.  The
+	 * old arrays will be freed by __kvm_set_memory_region() if installing
+	 * the new memslot is successful.
+	 */
+	memset(&slot->arch, 0, sizeof(slot->arch));
+
 	for (i = 0; i < KVM_NR_PAGE_SIZES; ++i) {
 		struct kvm_lpage_info *linfo;
 		unsigned long ugfn;
@@ -9807,6 +9848,10 @@ int kvm_arch_prepare_memory_region(struct kvm *kvm,
 				const struct kvm_userspace_memory_region *mem,
 				enum kvm_mr_change change)
 {
+	if (change == KVM_MR_MOVE)
+		return kvm_arch_create_memslot(kvm, memslot,
+					       mem->memory_size >> PAGE_SHIFT);
+
 	return 0;
 }
 
