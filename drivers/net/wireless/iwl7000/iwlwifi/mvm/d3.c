@@ -5,10 +5,9 @@
  *
  * GPL LICENSE SUMMARY
  *
- * Copyright(c) 2012 - 2014 Intel Corporation. All rights reserved.
+ * Copyright(c) 2012 - 2014, 2018 - 2020 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2015 Intel Mobile Communications GmbH
  * Copyright(c) 2016 - 2017 Intel Deutschland GmbH
- * Copyright(c) 2018 - 2019 Intel Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -28,10 +27,9 @@
  *
  * BSD LICENSE
  *
- * Copyright(c) 2012 - 2014 Intel Corporation. All rights reserved.
+ * Copyright(c) 2012 - 2014, 2018 - 2020 Intel Corporation. All rights reserved.
  * Copyright(c) 2013 - 2015 Intel Mobile Communications GmbH
  * Copyright(c) 2016 - 2017 Intel Deutschland GmbH
- * Copyright(c) 2018 - 2019 Intel Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -72,6 +70,7 @@
 #include "iwl-modparams.h"
 #include "fw-api.h"
 #include "mvm.h"
+#include "fw/img.h"
 
 void iwl_mvm_set_rekey_data(struct ieee80211_hw *hw,
 			    struct ieee80211_vif *vif,
@@ -80,13 +79,15 @@ void iwl_mvm_set_rekey_data(struct ieee80211_hw *hw,
 	struct iwl_mvm *mvm = IWL_MAC80211_GET_MVM(hw);
 	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
 
-	if (iwlwifi_mod_params.swcrypto)
-		return;
-
 	mutex_lock(&mvm->mutex);
 
-	memcpy(mvmvif->rekey_data.kek, data->kek, NL80211_KEK_LEN);
-	memcpy(mvmvif->rekey_data.kck, data->kck, NL80211_KCK_LEN);
+	mvmvif->rekey_data.kek_len = cfg80211_rekey_get_kek_len(data);
+	mvmvif->rekey_data.kck_len = cfg80211_rekey_get_kck_len(data);
+	memcpy(mvmvif->rekey_data.kek, data->kek,
+	       cfg80211_rekey_get_kek_len(data));
+	memcpy(mvmvif->rekey_data.kck, data->kck,
+	       cfg80211_rekey_get_kck_len(data));
+	mvmvif->rekey_data.akm = cfg80211_rekey_akm(data) & 0xFF;
 	mvmvif->rekey_data.replay_ctr =
 		cpu_to_le64(be64_to_cpup((__be64 *)data->replay_ctr));
 	mvmvif->rekey_data.valid = true;
@@ -161,6 +162,7 @@ static const u8 *iwl_mvm_find_max_pn(struct ieee80211_key_conf *key,
 struct wowlan_key_data {
 	struct iwl_wowlan_rsc_tsc_params_cmd *rsc_tsc;
 	struct iwl_wowlan_tkip_params_cmd *tkip;
+	struct iwl_wowlan_kek_kck_material_cmd_v3 *kek_kck_cmd;
 	bool error, use_rsc_tsc, use_tkip, configure_keys;
 	int wep_key_idx;
 };
@@ -237,7 +239,12 @@ static void iwl_mvm_wowlan_program_keys(struct ieee80211_hw *hw,
 	default:
 		data->error = true;
 		return;
+	case WLAN_CIPHER_SUITE_BIP_GMAC_256:
+	case WLAN_CIPHER_SUITE_BIP_GMAC_128:
+		data->kek_kck_cmd->igtk_cipher = cpu_to_le32(STA_KEY_FLG_GCMP);
+		return;
 	case WLAN_CIPHER_SUITE_AES_CMAC:
+		data->kek_kck_cmd->igtk_cipher = cpu_to_le32(STA_KEY_FLG_CCM);
 		/*
 		 * Ignore CMAC keys -- the WoWLAN firmware doesn't support them
 		 * but we also shouldn't abort suspend due to that. It does have
@@ -250,8 +257,10 @@ static void iwl_mvm_wowlan_program_keys(struct ieee80211_hw *hw,
 		if (sta) {
 			u64 pn64;
 
-			tkip_sc = data->rsc_tsc->all_tsc_rsc.tkip.unicast_rsc;
-			tkip_tx_sc = &data->rsc_tsc->all_tsc_rsc.tkip.tsc;
+			tkip_sc =
+			   data->rsc_tsc->params.all_tsc_rsc.tkip.unicast_rsc;
+			tkip_tx_sc =
+				&data->rsc_tsc->params.all_tsc_rsc.tkip.tsc;
 
 			rx_p1ks = data->tkip->rx_uni;
 
@@ -270,9 +279,11 @@ static void iwl_mvm_wowlan_program_keys(struct ieee80211_hw *hw,
 			rx_mic_key = data->tkip->mic_keys.rx_unicast;
 		} else {
 			tkip_sc =
-				data->rsc_tsc->all_tsc_rsc.tkip.multicast_rsc;
+			  data->rsc_tsc->params.all_tsc_rsc.tkip.multicast_rsc;
 			rx_p1ks = data->tkip->rx_multi;
 			rx_mic_key = data->tkip->mic_keys.rx_mcast;
+			data->kek_kck_cmd->gtk_cipher =
+				cpu_to_le32(STA_KEY_FLG_TKIP);
 		}
 
 		/*
@@ -304,16 +315,25 @@ static void iwl_mvm_wowlan_program_keys(struct ieee80211_hw *hw,
 		data->use_rsc_tsc = true;
 		break;
 	case WLAN_CIPHER_SUITE_CCMP:
+	case WLAN_CIPHER_SUITE_GCMP:
+	case WLAN_CIPHER_SUITE_GCMP_256:
 		if (sta) {
 			u64 pn64;
 
-			aes_sc = data->rsc_tsc->all_tsc_rsc.aes.unicast_rsc;
-			aes_tx_sc = &data->rsc_tsc->all_tsc_rsc.aes.tsc;
+			aes_sc =
+			   data->rsc_tsc->params.all_tsc_rsc.aes.unicast_rsc;
+			aes_tx_sc =
+				&data->rsc_tsc->params.all_tsc_rsc.aes.tsc;
 
 			pn64 = atomic64_read(&key->tx_pn);
 			aes_tx_sc->pn = cpu_to_le64(pn64);
 		} else {
-			aes_sc = data->rsc_tsc->all_tsc_rsc.aes.multicast_rsc;
+			aes_sc =
+			   data->rsc_tsc->params.all_tsc_rsc.aes.multicast_rsc;
+			data->kek_kck_cmd->gtk_cipher =
+				key->cipher == WLAN_CIPHER_SUITE_CCMP ?
+				cpu_to_le32(STA_KEY_FLG_CCM) :
+				cpu_to_le32(STA_KEY_FLG_GCMP);
 		}
 
 		/*
@@ -743,7 +763,7 @@ static int iwl_mvm_wowlan_config_key_params(struct iwl_mvm *mvm,
 					    struct ieee80211_vif *vif,
 					    u32 cmd_flags)
 {
-	struct iwl_wowlan_kek_kck_material_cmd kek_kck_cmd = {};
+	struct iwl_wowlan_kek_kck_material_cmd_v3 kek_kck_cmd = {};
 	struct iwl_wowlan_tkip_params_cmd tkip_cmd = {};
 	bool unified = fw_has_capa(&mvm->fw->ucode_capa,
 				   IWL_UCODE_TLV_CAPA_CNSLDTD_D3_D0_IMG);
@@ -752,9 +772,12 @@ static int iwl_mvm_wowlan_config_key_params(struct iwl_mvm *mvm,
 		.use_rsc_tsc = false,
 		.tkip = &tkip_cmd,
 		.use_tkip = false,
+		.kek_kck_cmd = &kek_kck_cmd,
 	};
 	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
 	int ret;
+	u8 cmd_ver;
+	size_t cmd_size;
 
 	key_data.rsc_tsc = kzalloc(sizeof(*key_data.rsc_tsc), GFP_KERNEL);
 	if (!key_data.rsc_tsc)
@@ -781,10 +804,28 @@ static int iwl_mvm_wowlan_config_key_params(struct iwl_mvm *mvm,
 	}
 
 	if (key_data.use_rsc_tsc) {
-		ret = iwl_mvm_send_cmd_pdu(mvm,
-					   WOWLAN_TSC_RSC_PARAM, cmd_flags,
-					   sizeof(*key_data.rsc_tsc),
+		int ver = iwl_fw_lookup_cmd_ver(mvm->fw, LONG_GROUP,
+						WOWLAN_TSC_RSC_PARAM);
+		int size;
+
+		if (ver == 4) {
+			size = sizeof(*key_data.rsc_tsc);
+			key_data.rsc_tsc->sta_id =
+				cpu_to_le32(mvmvif->ap_sta_id);
+
+		} else if (ver == 2 || ver == IWL_FW_CMD_VER_UNKNOWN) {
+			size = sizeof(key_data.rsc_tsc->params);
+		} else {
+			ret = 0;
+			WARN_ON_ONCE(1);
+			goto out;
+		}
+
+		ret = iwl_mvm_send_cmd_pdu(mvm, WOWLAN_TSC_RSC_PARAM,
+					   cmd_flags,
+					   size,
 					   key_data.rsc_tsc);
+
 		if (ret)
 			goto out;
 	}
@@ -792,9 +833,26 @@ static int iwl_mvm_wowlan_config_key_params(struct iwl_mvm *mvm,
 	if (key_data.use_tkip &&
 	    !fw_has_api(&mvm->fw->ucode_capa,
 			IWL_UCODE_TLV_API_TKIP_MIC_KEYS)) {
+		int ver = iwl_fw_lookup_cmd_ver(mvm->fw, LONG_GROUP,
+						WOWLAN_TKIP_PARAM);
+		int size;
+
+		if (ver == 2) {
+			size = sizeof(tkip_cmd);
+			key_data.tkip->sta_id =
+				cpu_to_le32(mvmvif->ap_sta_id);
+		} else if (ver == 1 || ver == IWL_FW_CMD_VER_UNKNOWN) {
+			size = sizeof(struct iwl_wowlan_tkip_params_cmd_ver_1);
+		} else {
+			ret =  -EINVAL;
+			WARN_ON_ONCE(1);
+			goto out;
+		}
+
+		/* send relevant data according to CMD version */
 		ret = iwl_mvm_send_cmd_pdu(mvm,
 					   WOWLAN_TKIP_PARAM,
-					   cmd_flags, sizeof(tkip_cmd),
+					   cmd_flags, size,
 					   &tkip_cmd);
 		if (ret)
 			goto out;
@@ -802,18 +860,29 @@ static int iwl_mvm_wowlan_config_key_params(struct iwl_mvm *mvm,
 
 	/* configure rekey data only if offloaded rekey is supported (d3) */
 	if (mvmvif->rekey_data.valid) {
+		cmd_ver = iwl_fw_lookup_cmd_ver(mvm->fw, IWL_ALWAYS_LONG_GROUP,
+						WOWLAN_KEK_KCK_MATERIAL);
+		if (WARN_ON(cmd_ver != 2 && cmd_ver != 3 &&
+			    cmd_ver != IWL_FW_CMD_VER_UNKNOWN))
+			return -EINVAL;
+		if (cmd_ver == 3)
+			cmd_size = sizeof(struct iwl_wowlan_kek_kck_material_cmd_v3);
+		else
+			cmd_size = sizeof(struct iwl_wowlan_kek_kck_material_cmd_v2);
+
 		memset(&kek_kck_cmd, 0, sizeof(kek_kck_cmd));
 		memcpy(kek_kck_cmd.kck, mvmvif->rekey_data.kck,
-		       NL80211_KCK_LEN);
-		kek_kck_cmd.kck_len = cpu_to_le16(NL80211_KCK_LEN);
+		       mvmvif->rekey_data.kck_len);
+		kek_kck_cmd.kck_len = cpu_to_le16(mvmvif->rekey_data.kck_len);
 		memcpy(kek_kck_cmd.kek, mvmvif->rekey_data.kek,
-		       NL80211_KEK_LEN);
-		kek_kck_cmd.kek_len = cpu_to_le16(NL80211_KEK_LEN);
+		       mvmvif->rekey_data.kek_len);
+		kek_kck_cmd.kek_len = cpu_to_le16(mvmvif->rekey_data.kek_len);
 		kek_kck_cmd.replay_ctr = mvmvif->rekey_data.replay_ctr;
+		kek_kck_cmd.akm = cpu_to_le32(mvmvif->rekey_data.akm);
 
 		ret = iwl_mvm_send_cmd_pdu(mvm,
 					   WOWLAN_KEK_KCK_MATERIAL, cmd_flags,
-					   sizeof(kek_kck_cmd),
+					   cmd_size,
 					   &kek_kck_cmd);
 		if (ret)
 			goto out;
@@ -847,18 +916,16 @@ iwl_mvm_wowlan_config(struct iwl_mvm *mvm,
 			return ret;
 	}
 
-	if (!iwlwifi_mod_params.swcrypto) {
-		/*
-		 * This needs to be unlocked due to lock ordering
-		 * constraints. Since we're in the suspend path
-		 * that isn't really a problem though.
-		 */
-		mutex_unlock(&mvm->mutex);
-		ret = iwl_mvm_wowlan_config_key_params(mvm, vif, CMD_ASYNC);
-		mutex_lock(&mvm->mutex);
-		if (ret)
-			return ret;
-	}
+	/*
+	 * This needs to be unlocked due to lock ordering
+	 * constraints. Since we're in the suspend path
+	 * that isn't really a problem though.
+	 */
+	mutex_unlock(&mvm->mutex);
+	ret = iwl_mvm_wowlan_config_key_params(mvm, vif, CMD_ASYNC);
+	mutex_lock(&mvm->mutex);
+	if (ret)
+		return ret;
 
 	ret = iwl_mvm_send_cmd_pdu(mvm, WOWLAN_CONFIGURATION, 0,
 				   sizeof(*wowlan_config_cmd),
@@ -1344,6 +1411,8 @@ static void iwl_mvm_set_key_rx_seq(struct iwl_mvm *mvm,
 
 	switch (key->cipher) {
 	case WLAN_CIPHER_SUITE_CCMP:
+	case WLAN_CIPHER_SUITE_GCMP:
+	case WLAN_CIPHER_SUITE_GCMP_256:
 		iwl_mvm_set_aes_rx_seq(mvm, rsc->aes.multicast_rsc, NULL, key);
 		break;
 	case WLAN_CIPHER_SUITE_TKIP:
@@ -1380,6 +1449,8 @@ static void iwl_mvm_d3_update_keys(struct ieee80211_hw *hw,
 		/* ignore WEP completely, nothing to do */
 		return;
 	case WLAN_CIPHER_SUITE_CCMP:
+	case WLAN_CIPHER_SUITE_GCMP:
+	case WLAN_CIPHER_SUITE_GCMP_256:
 	case WLAN_CIPHER_SUITE_TKIP:
 		/* we support these */
 		break;
@@ -1405,6 +1476,8 @@ static void iwl_mvm_d3_update_keys(struct ieee80211_hw *hw,
 
 		switch (key->cipher) {
 		case WLAN_CIPHER_SUITE_CCMP:
+		case WLAN_CIPHER_SUITE_GCMP:
+		case WLAN_CIPHER_SUITE_GCMP_256:
 			iwl_mvm_set_aes_rx_seq(data->mvm, sc->aes.unicast_rsc,
 					       sta, key);
 			atomic64_set(&key->tx_pn, le64_to_cpu(sc->aes.tsc.pn));
@@ -1487,11 +1560,21 @@ static bool iwl_mvm_setup_connection_keep(struct iwl_mvm *mvm,
 
 		switch (gtkdata.cipher) {
 		case WLAN_CIPHER_SUITE_CCMP:
+		case WLAN_CIPHER_SUITE_GCMP:
+			BUILD_BUG_ON(WLAN_KEY_LEN_CCMP != WLAN_KEY_LEN_GCMP);
+			BUILD_BUG_ON(sizeof(conf.key) < WLAN_KEY_LEN_CCMP);
 			conf.conf.keylen = WLAN_KEY_LEN_CCMP;
 			memcpy(conf.conf.key, status->gtk[0].key,
 			       WLAN_KEY_LEN_CCMP);
 			break;
+		case WLAN_CIPHER_SUITE_GCMP_256:
+			BUILD_BUG_ON(sizeof(conf.key) < WLAN_KEY_LEN_GCMP_256);
+			conf.conf.keylen = WLAN_KEY_LEN_GCMP_256;
+			memcpy(conf.conf.key, status->gtk[0].key,
+			       WLAN_KEY_LEN_GCMP_256);
+			break;
 		case WLAN_CIPHER_SUITE_TKIP:
+			BUILD_BUG_ON(sizeof(conf.key) < WLAN_KEY_LEN_TKIP);
 			conf.conf.keylen = WLAN_KEY_LEN_TKIP;
 			memcpy(conf.conf.key, status->gtk[0].key, 16);
 			/* leave TX MIC key zeroed, we don't use it anyway */
@@ -1604,9 +1687,9 @@ struct iwl_wowlan_status *iwl_mvm_send_wowlan_get_status(struct iwl_mvm *mvm)
 					    WOWLAN_GET_STATUSES, 0);
 
 	status_size = sizeof(*status);
-	data_size = ALIGN(le32_to_cpu(v7->wake_packet_bufsize), 4);
 
-	if (notif_ver == IWL_FW_CMD_VER_UNKNOWN || notif_ver < 9)
+	/* only ver 9 has a different size */
+	if (notif_ver == IWL_FW_CMD_VER_UNKNOWN || notif_ver != 9)
 		status_size = sizeof(*v7);
 
 	if (len < status_size) {
@@ -1916,27 +1999,55 @@ static void iwl_mvm_d3_disconnect_iter(void *data, u8 *mac,
 		ieee80211_resume_disconnect(vif);
 }
 
-static int iwl_mvm_check_rt_status(struct iwl_mvm *mvm,
-				   struct ieee80211_vif *vif)
+static bool iwl_mvm_rt_status(struct iwl_trans *trans, u32 base, u32 *err_id)
 {
-	u32 base = mvm->trans->dbg.lmac_error_event_table[0];
 	struct error_table_start {
 		/* cf. struct iwl_error_event_table */
 		u32 valid;
-		u32 error_id;
+		__le32 err_id;
 	} err_info;
 
-	iwl_trans_read_mem_bytes(mvm->trans, base,
-				 &err_info, sizeof(err_info));
+	if (!base)
+		return false;
 
-	if (err_info.valid &&
-	    err_info.error_id == RF_KILL_INDICATOR_FOR_WOWLAN) {
-		struct cfg80211_wowlan_wakeup wakeup = {
-			.rfkill_release = true,
-		};
-		ieee80211_report_wowlan_wakeup(vif, &wakeup, GFP_KERNEL);
+	iwl_trans_read_mem_bytes(trans, base,
+				 &err_info, sizeof(err_info));
+	if (err_info.valid && err_id)
+		*err_id = le32_to_cpu(err_info.err_id);
+
+	return !!err_info.valid;
+}
+
+static bool iwl_mvm_check_rt_status(struct iwl_mvm *mvm,
+				   struct ieee80211_vif *vif)
+{
+	u32 err_id;
+
+	/* check for lmac1 error */
+	if (iwl_mvm_rt_status(mvm->trans,
+			      mvm->trans->dbg.lmac_error_event_table[0],
+			      &err_id)) {
+		if (err_id == RF_KILL_INDICATOR_FOR_WOWLAN) {
+			struct cfg80211_wowlan_wakeup wakeup = {
+				.rfkill_release = true,
+			};
+			ieee80211_report_wowlan_wakeup(vif, &wakeup,
+						       GFP_KERNEL);
+		}
+		return true;
 	}
-	return err_info.valid;
+
+	/* check if we have lmac2 set and check for error */
+	if (iwl_mvm_rt_status(mvm->trans,
+			      mvm->trans->dbg.lmac_error_event_table[1], NULL))
+		return true;
+
+	/* check for umac error */
+	if (iwl_mvm_rt_status(mvm->trans,
+			      mvm->trans->dbg.umac_error_event_table, NULL))
+		return true;
+
+	return false;
 }
 
 static int __iwl_mvm_resume(struct iwl_mvm *mvm, bool test)
@@ -1971,6 +2082,9 @@ static int __iwl_mvm_resume(struct iwl_mvm *mvm, bool test)
 		ret = 1;
 		goto err;
 	}
+
+	iwl_dbg_tlv_time_point(&mvm->fwrt, IWL_FW_INI_TIME_POINT_HOST_D3_END,
+			       NULL);
 
 	ret = iwl_trans_d3_resume(mvm->trans, &d3_status, test, !unified_image);
 	if (ret)

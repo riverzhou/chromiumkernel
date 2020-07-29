@@ -17,7 +17,6 @@
 #define __CROS_EC_PD_UPDATE_H
 
 #include <linux/types.h>
-#include <linux/mfd/cros_ec.h>
 #include <linux/platform_data/cros_ec_commands.h>
 #include <linux/platform_data/cros_ec_proto.h>
 
@@ -57,6 +56,9 @@ struct cros_ec_pd_update_data {
 	int num_ports;
 	int force_update;
 	int is_suspending;
+
+	u32 pd_status;
+	struct mutex lock;
 };
 
 #define PD_ID_MAJOR_SHIFT 0

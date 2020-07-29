@@ -3,7 +3,7 @@
  * HE handling
  *
  * Copyright(c) 2017 Intel Deutschland GmbH
- * Copyright(c) 2019 Intel Corporation
+ * Copyright(c) 2019 - 2020 Intel Corporation
  */
 
 #include "ieee80211_i.h"
@@ -14,21 +14,25 @@ ieee80211_update_from_he_6ghz_capa(const struct ieee80211_he_6ghz_capa *he_6ghz_
 {
 	enum ieee80211_smps_mode smps_mode;
 
-	switch (le16_get_bits(he_6ghz_capa->capa,
-			      IEEE80211_HE_6GHZ_CAP_SM_PS)) {
-	case WLAN_HT_CAP_SM_PS_INVALID:
-	case WLAN_HT_CAP_SM_PS_STATIC:
-		smps_mode = IEEE80211_SMPS_STATIC;
-		break;
-	case WLAN_HT_CAP_SM_PS_DYNAMIC:
-		smps_mode = IEEE80211_SMPS_DYNAMIC;
-		break;
-	case WLAN_HT_CAP_SM_PS_DISABLED:
-		smps_mode = IEEE80211_SMPS_OFF;
-		break;
-	}
+	if (sta->sdata->vif.type == NL80211_IFTYPE_AP) {
+		switch (le16_get_bits(he_6ghz_capa->capa,
+				      IEEE80211_HE_6GHZ_CAP_SM_PS)) {
+		case WLAN_HT_CAP_SM_PS_INVALID:
+		case WLAN_HT_CAP_SM_PS_STATIC:
+			smps_mode = IEEE80211_SMPS_STATIC;
+			break;
+		case WLAN_HT_CAP_SM_PS_DYNAMIC:
+			smps_mode = IEEE80211_SMPS_DYNAMIC;
+			break;
+		case WLAN_HT_CAP_SM_PS_DISABLED:
+			smps_mode = IEEE80211_SMPS_OFF;
+			break;
+		}
 
-	sta->sta.smps_mode = smps_mode;
+		sta->sta.smps_mode = smps_mode;
+	} else {
+		sta->sta.smps_mode = IEEE80211_SMPS_OFF;
+	}
 
 	switch (le16_get_bits(he_6ghz_capa->capa,
 			      IEEE80211_HE_6GHZ_CAP_MAX_MPDU_LEN)) {
@@ -96,4 +100,44 @@ ieee80211_he_cap_ie_to_sta_he_cap(struct ieee80211_sub_if_data *sdata,
 
 	if (nl80211_is_6ghz(sband->band) && he_6ghz_capa)
 		ieee80211_update_from_he_6ghz_capa(he_6ghz_capa, sta);
+}
+
+void
+ieee80211_he_op_ie_to_bss_conf(struct ieee80211_vif *vif,
+			const struct ieee80211_he_operation *he_op_ie_elem)
+{
+	struct ieee80211_he_operation *he_operation =
+					&vif->bss_conf.he_operation;
+
+	if (!he_op_ie_elem) {
+		memset(he_operation, 0, sizeof(*he_operation));
+		return;
+	}
+
+	vif->bss_conf.he_operation = *he_op_ie_elem;
+}
+
+void
+ieee80211_he_spr_ie_to_bss_conf(struct ieee80211_vif *vif,
+				const struct ieee80211_he_spr *he_spr_ie_elem)
+{
+	struct ieee80211_he_obss_pd *he_obss_pd =
+					&vif->bss_conf.he_obss_pd;
+	const u8 *data;
+
+	memset(he_obss_pd, 0, sizeof(*he_obss_pd));
+
+	if (!he_spr_ie_elem)
+		return;
+	data = he_spr_ie_elem->optional;
+
+	if (he_spr_ie_elem->he_sr_control &
+	    IEEE80211_HE_SPR_NON_SRG_OFFSET_PRESENT)
+		data++;
+	if (he_spr_ie_elem->he_sr_control &
+	    IEEE80211_HE_SPR_SRG_INFORMATION_PRESENT) {
+		he_obss_pd->max_offset = *data++;
+		he_obss_pd->min_offset = *data++;
+		he_obss_pd->enable = true;
+	}
 }
