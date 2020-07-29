@@ -5,9 +5,8 @@
  *
  * GPL LICENSE SUMMARY
  *
- * Copyright(c) 2007 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2015 - 2017 Intel Deutschland GmbH
- * Copyright(c) 2018 - 2019 Intel Corporation
+ * Copyright(c) 2007 - 2014, 2018 - 2020 Intel Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -27,9 +26,8 @@
  *
  * BSD LICENSE
  *
- * Copyright(c) 2005 - 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2015 - 2017 Intel Deutschland GmbH
- * Copyright(c) 2018 - 2019 Intel Corporation
+ * Copyright(c) 2005 - 2014, 2018 - 2020 Intel Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -191,13 +189,13 @@ struct tx_payload {
 /**
  * iwl_sw_stack_config - Holds active SW stack config as set from user space
  * @load_mask: Which FW are to be loaded during SW stack up
- * @iwl_phy_cfg_cmd: Which calibrations should be done
+ * @fw_calib_cmd_cfg: Which calibrations should be done
  */
 struct iwl_sw_stack_config {
 	u32 load_mask;
 	u32 calib_override_mask;
 	u32 fw_dbg_flags;
-	struct iwl_phy_cfg_cmd fw_calib_cmd_cfg[IWL_UCODE_TYPE_MAX];
+	struct iwl_phy_cfg_cmd_v3 fw_calib_cmd_cfg[IWL_UCODE_TYPE_MAX];
 };
 
 /* Note: This structure is read from the device with IO accesses,
@@ -377,7 +375,6 @@ struct iwl_xvt {
 	struct iwl_notif_wait_data notif_wait;
 
 	bool fw_running;
-	bool support_umac_log;
 
 	struct iwl_sw_stack_config sw_stack_cfg;
 	bool rx_hdr_enabled;
@@ -408,11 +405,6 @@ struct iwl_xvt {
 	u64 expected_tx_amount;
 	wait_queue_head_t tx_done_wq;
 	struct tx_queue_data queue_data[IWL_MAX_HW_QUEUES];
-};
-
-union geo_tx_power_profiles_cmd {
-	struct iwl_geo_tx_power_profiles_cmd geo_cmd;
-	struct iwl_geo_tx_power_profiles_cmd_v1 geo_cmd_v1;
 };
 
 #define IWL_OP_MODE_GET_XVT(_op_mode) \

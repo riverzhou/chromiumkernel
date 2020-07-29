@@ -398,6 +398,14 @@ static void gpiochip_free_valid_mask(struct gpio_chip *gpiochip)
 	gpiochip->valid_mask = NULL;
 }
 
+static int gpiochip_add_pin_ranges(struct gpio_chip *gc)
+{
+	if (gc->add_pin_ranges)
+		return gc->add_pin_ranges(gc);
+
+	return 0;
+}
+
 bool gpiochip_line_is_valid(const struct gpio_chip *gpiochip,
 				unsigned int offset)
 {
@@ -1411,6 +1419,10 @@ int gpiochip_add_data_with_key(struct gpio_chip *chip, void *data,
 		}
 	}
 
+	ret = gpiochip_add_pin_ranges(chip);
+	if (ret)
+		goto err_remove_of_chip;
+
 	acpi_gpiochip_add(chip);
 
 	machine_gpiochip_add(chip);
@@ -2179,25 +2191,37 @@ static void gpiochip_irq_relres(struct irq_data *d)
 	gpiochip_relres_irq(chip, d->hwirq);
 }
 
+static void gpiochip_irq_mask(struct irq_data *d)
+{
+	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
+
+	if (gc->irq.irq_mask)
+		gc->irq.irq_mask(d);
+	gpiochip_disable_irq(gc, d->hwirq);
+}
+
+static void gpiochip_irq_unmask(struct irq_data *d)
+{
+	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
+
+	gpiochip_enable_irq(gc, d->hwirq);
+	if (gc->irq.irq_unmask)
+		gc->irq.irq_unmask(d);
+}
+
 static void gpiochip_irq_enable(struct irq_data *d)
 {
 	struct gpio_chip *chip = irq_data_get_irq_chip_data(d);
 
 	gpiochip_enable_irq(chip, d->hwirq);
-	if (chip->irq.irq_enable)
-		chip->irq.irq_enable(d);
-	else
-		chip->irq.chip->irq_unmask(d);
+	chip->irq.irq_enable(d);
 }
 
 static void gpiochip_irq_disable(struct irq_data *d)
 {
 	struct gpio_chip *chip = irq_data_get_irq_chip_data(d);
 
-	if (chip->irq.irq_disable)
-		chip->irq.irq_disable(d);
-	else
-		chip->irq.chip->irq_mask(d);
+	chip->irq.irq_disable(d);
 	gpiochip_disable_irq(chip, d->hwirq);
 }
 
@@ -2222,10 +2246,21 @@ static void gpiochip_set_irq_hooks(struct gpio_chip *gpiochip)
 			  "detected irqchip that is shared with multiple gpiochips: please fix the driver.\n");
 		return;
 	}
-	gpiochip->irq.irq_enable = irqchip->irq_enable;
-	gpiochip->irq.irq_disable = irqchip->irq_disable;
-	irqchip->irq_enable = gpiochip_irq_enable;
-	irqchip->irq_disable = gpiochip_irq_disable;
+	if (irqchip->irq_disable) {
+		gpiochip->irq.irq_disable = irqchip->irq_disable;
+		irqchip->irq_disable = gpiochip_irq_disable;
+	} else {
+		gpiochip->irq.irq_mask = irqchip->irq_mask;
+		irqchip->irq_mask = gpiochip_irq_mask;
+	}
+
+	if (irqchip->irq_enable) {
+		gpiochip->irq.irq_enable = irqchip->irq_enable;
+		irqchip->irq_enable = gpiochip_irq_enable;
+	} else {
+		gpiochip->irq.irq_unmask = irqchip->irq_unmask;
+		irqchip->irq_unmask = gpiochip_irq_unmask;
+	}
 }
 
 /**
@@ -3887,7 +3922,9 @@ int gpiochip_lock_as_irq(struct gpio_chip *chip, unsigned int offset)
 		}
 	}
 
-	if (test_bit(FLAG_IS_OUT, &desc->flags)) {
+	/* To be valid for IRQ the line needs to be input or open drain */
+	if (test_bit(FLAG_IS_OUT, &desc->flags) &&
+	    !test_bit(FLAG_OPEN_DRAIN, &desc->flags)) {
 		chip_err(chip,
 			 "%s: tried to flag a GPIO set as output for IRQ\n",
 			 __func__);
@@ -3950,7 +3987,12 @@ void gpiochip_enable_irq(struct gpio_chip *chip, unsigned int offset)
 
 	if (!IS_ERR(desc) &&
 	    !WARN_ON(!test_bit(FLAG_USED_AS_IRQ, &desc->flags))) {
-		WARN_ON(test_bit(FLAG_IS_OUT, &desc->flags));
+		/*
+		 * We must not be output when using IRQ UNLESS we are
+		 * open drain.
+		 */
+		WARN_ON(test_bit(FLAG_IS_OUT, &desc->flags) &&
+			!test_bit(FLAG_OPEN_DRAIN, &desc->flags));
 		set_bit(FLAG_IRQ_IS_ENABLED, &desc->flags);
 	}
 }

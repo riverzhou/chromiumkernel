@@ -21,6 +21,7 @@
 #include <media/v4l2-ioctl.h>
 
 #include "virtio_video.h"
+#include "virtio_video_dec.h"
 
 static void virtio_video_dec_buf_queue(struct vb2_buffer *vb)
 {
@@ -122,6 +123,7 @@ static void virtio_video_dec_stop_streaming(struct vb2_queue *vq)
 static const struct vb2_ops virtio_video_dec_qops = {
 	.queue_setup	 = virtio_video_queue_setup,
 	.buf_init	 = virtio_video_buf_init,
+	.buf_prepare	 = virtio_video_buf_prepare,
 	.buf_cleanup	 = virtio_video_buf_cleanup,
 	.buf_queue	 = virtio_video_dec_buf_queue,
 	.start_streaming = virtio_video_dec_start_streaming,
@@ -334,8 +336,8 @@ static int virtio_video_dec_enum_fmt_vid_cap(struct file *file, void *fh,
 }
 
 
-int virtio_video_dec_enum_fmt_vid_out(struct file *file, void *fh,
-				      struct v4l2_fmtdesc *f)
+static int virtio_video_dec_enum_fmt_vid_out(struct file *file, void *fh,
+					     struct v4l2_fmtdesc *f)
 {
 	struct virtio_video_stream *stream = file2stream(file);
 	struct virtio_video_device *vvd = to_virtio_vd(stream->video_dev);
@@ -418,10 +420,8 @@ static const struct v4l2_ioctl_ops virtio_video_dec_ioctl_ops = {
 
 int virtio_video_dec_init(struct video_device *vd)
 {
-	ssize_t num;
-
 	vd->ioctl_ops = &virtio_video_dec_ioctl_ops;
-	num = strscpy(vd->name, "stateful-decoder", sizeof(vd->name));
+	strscpy(vd->name, "stateful-decoder", sizeof(vd->name));
 
 	return 0;
 }

@@ -8,7 +8,7 @@
  * Copyright 2008, Johannes Berg <johannes@sipsolutions.net>
  * Copyright 2013-2014  Intel Mobile Communications GmbH
  * Copyright (c) 2016        Intel Deutschland GmbH
- * Copyright (C) 2018 Intel Corporation
+ * Copyright (C) 2018-2020 Intel Corporation
  */
 #include <linux/slab.h>
 #include <linux/kernel.h>
@@ -553,10 +553,6 @@ int ieee80211_do_open(struct wireless_dev *wdev, bool coming_up)
 	case NUM_NL80211_IFTYPES:
 	case NL80211_IFTYPE_P2P_CLIENT:
 	case NL80211_IFTYPE_P2P_GO:
-#if CFG80211_VERSION >= KERNEL_VERSION(99,0,0)
-	case NL80211_IFTYPE_NAN_DATA:
-		/* keep code in case of fall-through (spatch generated) */
-#endif
 		/* cannot happen */
 		WARN_ON(1);
 		break;
@@ -839,9 +835,6 @@ static void ieee80211_do_stop(struct ieee80211_sub_if_data *sdata,
 		break;
 	case NL80211_IFTYPE_ADHOC:
 		ieee80211_ibss_stop(sdata);
-		break;
-	case NL80211_IFTYPE_AP:
-		cancel_work_sync(&sdata->u.ap.request_smps_work);
 		break;
 	case NL80211_IFTYPE_MONITOR:
 		if (sdata->u.mntr.flags & MONITOR_FLAG_COOK_FRAMES)
@@ -1213,20 +1206,7 @@ bp_ieee80211_get_stats64(struct net_device *dev,
 }
 #endif
 
-#if LINUX_VERSION_IS_LESS(4,10,0) && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,6)
-static int __change_mtu(struct net_device *ndev, int new_mtu){
-	if (new_mtu < 256 || new_mtu > IEEE80211_MAX_DATA_LEN)
-		return -EINVAL;
-	ndev->mtu = new_mtu;
-	return 0;
-}
-#endif
-
 static const struct net_device_ops ieee80211_dataif_ops = {
-#if LINUX_VERSION_IS_LESS(4,10,0) && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,6)
-	.ndo_change_mtu = __change_mtu,
-#endif
-
 	.ndo_open		= ieee80211_open,
 	.ndo_stop		= ieee80211_stop,
 	.ndo_uninit		= ieee80211_uninit,
@@ -1285,10 +1265,6 @@ static u16 ieee80211_monitor_select_queue(struct net_device *dev,
 }
 
 static const struct net_device_ops ieee80211_monitorif_ops = {
-#if LINUX_VERSION_IS_LESS(4,10,0) && RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,6)
-	.ndo_change_mtu = __change_mtu,
-#endif
-
 	.ndo_open		= ieee80211_open,
 	.ndo_stop		= ieee80211_stop,
 	.ndo_uninit		= ieee80211_uninit,
@@ -1327,7 +1303,6 @@ static void ieee80211_if_setup(struct net_device *dev)
 static void ieee80211_if_setup_no_queue(struct net_device *dev)
 {
 	ieee80211_if_setup(dev);
-	dev->features |= NETIF_F_LLTX;
 #if LINUX_VERSION_IS_GEQ(4,3,0)
 	dev->priv_flags |= IFF_NO_QUEUE;
 #else
@@ -1540,10 +1515,7 @@ static void ieee80211_setup_sdata(struct ieee80211_sub_if_data *sdata,
 	case NL80211_IFTYPE_AP:
 		skb_queue_head_init(&sdata->u.ap.ps.bc_buf);
 		INIT_LIST_HEAD(&sdata->u.ap.vlans);
-		INIT_WORK(&sdata->u.ap.request_smps_work,
-			  ieee80211_request_smps_ap_work);
 		sdata->vif.bss_conf.bssid = sdata->vif.addr;
-		sdata->u.ap.req_smps = IEEE80211_SMPS_OFF;
 		break;
 	case NL80211_IFTYPE_P2P_CLIENT:
 		type = NL80211_IFTYPE_STATION;
@@ -1592,10 +1564,6 @@ static void ieee80211_setup_sdata(struct ieee80211_sub_if_data *sdata,
 		break;
 	case NL80211_IFTYPE_UNSPECIFIED:
 	case NUM_NL80211_IFTYPES:
-#if CFG80211_VERSION >= KERNEL_VERSION(99,0,0)
-	case NL80211_IFTYPE_NAN_DATA:
-		/* keep code in case of fall-through (spatch generated) */
-#endif
 		WARN_ON(1);
 		break;
 	}
@@ -2004,6 +1972,8 @@ struct vif_params *params)
 			sdata->u.mgd.use_4addr = params->use_4addr;
 
 		ndev->features |= local->hw.netdev_features;
+		ndev->hw_features |= ndev->features &
+					MAC80211_SUPPORTED_FEATURES_TX;
 
 		netdev_set_default_ethtool_ops(ndev, &ieee80211_ethtool_ops);
 
@@ -2012,7 +1982,7 @@ struct vif_params *params)
 		ndev->min_mtu = 256;
 #endif
 #if LINUX_VERSION_IS_GEQ(4,10,0)
-		ndev->max_mtu = IEEE80211_MAX_DATA_LEN;
+		ndev->max_mtu = local->hw.max_mtu;
 #endif
 
 		ret = register_netdevice(ndev);
