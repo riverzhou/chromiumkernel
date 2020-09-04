@@ -287,6 +287,18 @@ int dp_catalog_aux_clear_trans(struct dp_catalog *dp_catalog, bool read)
 	return 0;
 }
 
+int dp_catalog_aux_clear_hw_interrupts(struct dp_catalog *dp_catalog)
+{
+	struct dp_catalog_private *catalog = container_of(dp_catalog,
+				struct dp_catalog_private, dp_catalog);
+
+	dp_read_aux(catalog, REG_DP_PHY_AUX_INTERRUPT_STATUS);
+	dp_write_aux(catalog, REG_DP_PHY_AUX_INTERRUPT_CLEAR, 0x1f);
+	dp_write_aux(catalog, REG_DP_PHY_AUX_INTERRUPT_CLEAR, 0x9f);
+	dp_write_aux(catalog, REG_DP_PHY_AUX_INTERRUPT_CLEAR, 0);
+	return 0;
+}
+
 void dp_catalog_aux_reset(struct dp_catalog *dp_catalog)
 {
 	u32 aux_ctrl;
@@ -345,20 +357,21 @@ void dp_catalog_aux_update_cfg(struct dp_catalog *dp_catalog,
 	catalog->aux_lut_cfg_index[type] = new_index;
 }
 
-static void dump_regs(void * __iomem *base, int len)
+static void dump_regs(void __iomem *base, int len)
 {
 	int i;
 	u32 x0, x4, x8, xc;
+	u32 addr_off = 0;
 
 	len = DIV_ROUND_UP(len, 16);
-	for (i = 0; i < len; i += 16) {
-		x0 = readl_relaxed(base);
-		x4 = readl_relaxed(base + 0x04);
-		x8 = readl_relaxed(base + 0x08);
-		xc = readl_relaxed(base + 0x0c);
+	for (i = 0; i < len; i++) {
+		x0 = readl_relaxed(base + addr_off);
+		x4 = readl_relaxed(base + addr_off + 0x04);
+		x8 = readl_relaxed(base + addr_off + 0x08);
+		xc = readl_relaxed(base + addr_off + 0x0c);
 
-		pr_info("%p: %08x %08x %08x %08x", base, x0, x4, x8, xc);
-		base += 16;
+		pr_info("%08x: %08x %08x %08x %08x", addr_off, x0, x4, x8, xc);
+		addr_off += 16;
 	}
 }
 
@@ -422,7 +435,6 @@ void dp_catalog_aux_setup(struct dp_catalog *dp_catalog)
 
 	dp_write_phy(catalog, REG_DP_PHY_PD_CTL, DP_PHY_PD_CTL_PSR_PWRDN);
 
-	/* Make sure that hardware is done with  PSR power down */
 	dp_write_phy(catalog, REG_DP_PHY_PD_CTL, DP_PHY_PD_CTL_PWRDN |
 		DP_PHY_PD_CTL_AUX_PWRDN | DP_PHY_PD_CTL_LANE_0_1_PWRDN
 		| DP_PHY_PD_CTL_LANE_2_3_PWRDN | DP_PHY_PD_CTL_PLL_PWRDN
@@ -555,6 +567,9 @@ void dp_catalog_ctrl_config_misc(struct dp_catalog *dp_catalog,
 				struct dp_catalog_private, dp_catalog);
 
 	misc_val = dp_read_link(catalog, REG_DP_MISC1_MISC0);
+
+	/* clear bpp bits */
+	misc_val &= ~(0x07 << DP_MISC0_TEST_BITS_DEPTH_SHIFT);
 	misc_val |= colorimetry_cfg << DP_MISC0_COLORIMETRY_CFG_SHIFT;
 	misc_val |= test_bits_depth << DP_MISC0_TEST_BITS_DEPTH_SHIFT;
 	/* Configure clock to synchronous mode */

@@ -275,6 +275,7 @@ static int qfprom_probe(struct platform_device *pdev)
 		.name = "qfprom",
 		.stride = 1,
 		.word_size = 1,
+		.id = NVMEM_DEVID_AUTO,
 		.reg_read = qfprom_reg_read,
 	};
 	struct device *dev = &pdev->dev;

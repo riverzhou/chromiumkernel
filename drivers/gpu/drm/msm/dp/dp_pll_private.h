@@ -83,29 +83,7 @@ static inline struct dp_pll_vco_clk *to_dp_vco_hw(struct clk_hw *hw)
 
 #define to_dp_pll_db(x)	((struct dp_pll_db *)x->priv)
 
-int dp_vco_set_rate_10nm(struct clk_hw *hw, unsigned long rate,
-				unsigned long parent_rate);
-unsigned long dp_vco_recalc_rate_10nm(struct clk_hw *hw,
-				unsigned long parent_rate);
-long dp_vco_round_rate_10nm(struct clk_hw *hw, unsigned long rate,
-				unsigned long *parent_rate);
-int dp_vco_prepare_10nm(struct clk_hw *hw);
-void dp_vco_unprepare_10nm(struct clk_hw *hw);
-
-#ifdef CONFIG_DRM_MSM_DP_10NM_PLL
-
 int msm_dp_pll_10nm_init(struct msm_dp_pll *dp_pll, int id);
 void msm_dp_pll_10nm_deinit(struct msm_dp_pll *dp_pll);
-
-#else
-int msm_dp_pll_10nm_init(struct msm_dp_pll *dp_pll, int id)
-{
-	return -ENODEV;
-}
-
-void msm_dp_pll_10nm_deinit(struct msm_dp_pll *dp_pll)
-{
-}
-#endif
 
 #endif /* __DP_PLL_10NM_H */

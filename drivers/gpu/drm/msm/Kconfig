@@ -8,6 +8,7 @@ config DRM_MSM
 	depends on MMU
 	depends on INTERCONNECT || !INTERCONNECT
 	depends on QCOM_OCMEM || QCOM_OCMEM=n
+	depends on IOMMU_IO_PGTABLE
 	select QCOM_MDT_LOADER if ARCH_QCOM
 	select REGULATOR
 	select DRM_KMS_HELPER
@@ -58,20 +59,13 @@ config DRM_MSM_HDMI_HDCP
 	  Choose this option to enable HDCP state machine
 
 config DRM_MSM_DP
-	bool "Enable DP support in MSM DRM driver"
+	bool "Enable DisplayPort support in MSM DRM driver"
 	depends on DRM_MSM
 	default y
 	help
-	  Compile in support for DP driver in msm drm driver. DP external
+	  Compile in support for DP driver in MSM DRM driver. DP external
 	  display support is enabled through this config option. It can
 	  be primary or secondary display on device.
-
-config DRM_MSM_DP_10NM_PLL
-	bool "Enable DP 10nm PLL driver in MSM DRM (used by sc7180)"
-	depends on DRM_MSM_DP
-	default y
-	help
-	  Choose this option if DP PLL on SC7180 is used on the platform.
 
 config DRM_MSM_DSI
 	bool "Enable DSI support in MSM DRM driver"
