@@ -584,8 +584,8 @@ static int dp_link_parse_phy_test_params(struct dp_link_private *link)
 	DRM_DEBUG_DP("phy_test_pattern_sel = 0x%x\n", data);
 
 	switch (data) {
-	case DP_PHY_TEST_PATTERN_NONE:
 	case DP_PHY_TEST_PATTERN_SEL_MASK:
+	case DP_PHY_TEST_PATTERN_NONE:
 	case DP_PHY_TEST_PATTERN_D10_2:
 	case DP_PHY_TEST_PATTERN_ERROR_COUNT:
 	case DP_PHY_TEST_PATTERN_PRBS7:
@@ -755,7 +755,7 @@ static void dp_link_parse_sink_status_field(struct dp_link_private *link)
  *
  * This function will handle new link training requests that are initiated by
  * the sink. In particular, it will update the requested lane count and link
- * link rate, and then trigger the link retraining procedure.
+ * rate, and then trigger the link retraining procedure.
  *
  * The function will return 0 if a link training request has been processed,
  * otherwise it will return -EINVAL.

@@ -113,6 +113,24 @@
 		vin-supply = <&ppvar_sys>;
 	};
 
+	pp3300_a: pp3300-a-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "pp3300_a";
+
+		/* EC turns on with en_pp3300_a; always on for AP */
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+
+		/*
+		 * Actually should be pp3300 but that's practically an alias for
+		 * pp3300_a so we use pp3300's vin-supply here to avoid one more
+		 * node.
+		 */
+		vin-supply = <&ppvar_sys>;
+	};
+
 	pp3300_audio:
 	pp3300_codec: pp3300-codec-regulator {
 		compatible = "regulator-fixed";
@@ -125,6 +143,8 @@
 		enable-active-high;
 		pinctrl-names = "default";
 		pinctrl-0 = <&en_pp3300_codec>;
+
+		vin-supply = <&pp3300_a>;
 	};
 
 	pp3300_dx_edp:
@@ -139,6 +159,8 @@
 		enable-active-high;
 		pinctrl-names = "default";
 		pinctrl-0 = <&en_pp3300_dx_edp>;
+
+		vin-supply = <&pp3300_a>;
 	};
 
 	pp3300_fp_tp: pp3300-fp-tp-regulator {
@@ -151,12 +173,24 @@
 		/* AP turns on with PP1800_VIO_OUT; always on for AP */
 		regulator-always-on;
 		regulator-boot-on;
+
+		vin-supply = <&pp3300_a>;
 	};
 
 	/* BOARD-SPECIFIC TOP LEVEL NODES */
 
 	backlight: backlight {
 		compatible = "pwm-backlight";
+
+		/* The panels don't seem to like anything below ~ 5% */
+		brightness-levels = <
+			196 256 324 400 484 576 676 784 900 1024 1156 1296
+			1444 1600 1764 1936 2116 2304 2500 2704 2916 3136
+			3364 3600 3844 4096
+		>;
+		num-interpolated-steps = <64>;
+		default-brightness-level = <951>;
+
 		pwms = <&cros_ec_pwm 1>;
 		enable-gpios = <&tlmm 12 GPIO_ACTIVE_HIGH>;
 		power-supply = <&ppvar_sys>;
@@ -207,22 +241,28 @@
 			"Headphone Jack", "HPOL",
 			"Headphone Jack", "HPOR";
 
-		dai-link-0 {
+		aux-dev = <&alc5682>;
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		dai-link@0 {
 			link-name = "MultiMedia0";
+			reg = <0>;
 			cpu {
-				sound-dai = <&lpass_cpu  0>;
+				sound-dai = <&lpass_cpu 0>;
 			};
 
 			codec {
-				sound-dai = <&alc5682  0>;
+				sound-dai = <&alc5682 0>;
 			};
 		};
 
-		dai-link-1 {
+		dai-link@1 {
 			link-name = "MultiMedia1";
-			unidirectional = <0>;
+			reg = <1>;
 			cpu {
-				sound-dai = <&lpass_cpu  1>;
+				sound-dai = <&lpass_cpu 1>;
 			};
 
 			codec {
@@ -395,9 +435,6 @@
 			regulator-min-microvolt = <1800000>;
 			regulator-max-microvolt = <1800000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
-			/* TODO: figre out when to turn this off */
-			regulator-always-on;
-			regulator-boot-on;
 		};
 
 		pp2700_l16a: ldo16 {
@@ -677,6 +714,23 @@ edp_brij_i2c: &i2c2 {
 ap_sar_sensor_i2c: &i2c5 {
 	status = "okay";
 	clock-frequency = <400000>;
+
+	ap_sar_sensor: proximity@28 {
+		compatible = "semtech,sx9310";
+		reg = <0x28>;
+		#io-channel-cells = <1>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&p_sensor_int_l>;
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <24 IRQ_TYPE_LEVEL_LOW>;
+
+		vdd-supply = <&pp3300_a>;
+		svdd-supply = <&pp1800_prox>;
+
+		status = "disabled";
+		label = "proximity-wifi";
+	};
 };
 
 ap_tp_i2c: &i2c7 {
@@ -798,8 +852,8 @@ hp_i2c: &i2c9 {
 	memory-region = <&mba_mem &mpss_mem>;
 
 	/* This gets overridden for SKUs with LTE support. */
-	firmware-name = "sc7180-mss/google-trogdor-nolte/mba.mbn",
-			"sc7180-mss/google-trogdor-nolte/modem.mdt";
+	firmware-name = "qcom/sc7180-trogdor/modem-nolte/mba.mbn",
+			"qcom/sc7180-trogdor/modem-nolte/qdsp6sw.mbn";
 };
 
 &sdhc_1 {
@@ -1335,6 +1389,19 @@ ap_spi_fp: &spi10 {
 			 * remove "output-high" here.
 			 */
 			output-high; /* TODO: Remove this? */
+		};
+	};
+
+	p_sensor_int_l: p-sensor-int-l {
+		pinmux {
+			pins = "gpio24";
+			function = "gpio";
+			input-enable;
+		};
+
+		pinconf {
+			pins = "gpio24";
+			bias-pull-up;
 		};
 	};
 

@@ -212,14 +212,14 @@ static u32 dither_matrix[DITHER_MATRIX_SZ] = {
 	15, 7, 13, 5, 3, 11, 1, 9, 12, 4, 14, 6, 0, 8, 2, 10
 };
 
-static void _dpu_encoder_setup_dither(struct dpu_encoder_phys *phys)
+static void _dpu_encoder_setup_dither(struct dpu_hw_pingpong *hw_pp, unsigned bpc)
 {
 	struct dpu_hw_dither_cfg dither_cfg = { 0 };
 
-	if (!phys->hw_pp || !phys->hw_pp->ops.setup_dither)
+	if (!hw_pp->ops.setup_dither)
 		return;
 
-	switch (phys->connector->display_info.bpc) {
+	switch (bpc) {
 	case 6:
 		dither_cfg.c0_bitdepth = 6;
 		dither_cfg.c1_bitdepth = 6;
@@ -228,14 +228,14 @@ static void _dpu_encoder_setup_dither(struct dpu_encoder_phys *phys)
 		dither_cfg.temporal_en = 0;
 		break;
 	default:
-		phys->hw_pp->ops.setup_dither(phys->hw_pp, NULL);
+		hw_pp->ops.setup_dither(hw_pp, NULL);
 		return;
 	}
 
 	memcpy(&dither_cfg.matrix, dither_matrix,
 			sizeof(u32) * DITHER_MATRIX_SZ);
 
-	phys->hw_pp->ops.setup_dither(phys->hw_pp, &dither_cfg);
+	hw_pp->ops.setup_dither(hw_pp, &dither_cfg);
 }
 
 void dpu_encoder_helper_report_irq_timeout(struct dpu_encoder_phys *phys_enc,
@@ -616,7 +616,10 @@ static int dpu_encoder_virt_atomic_check(
 	dpu_kms = to_dpu_kms(priv->kms);
 	mode = &crtc_state->mode;
 	adj_mode = &crtc_state->adjusted_mode;
-	global_state = dpu_kms_get_existing_global_state(dpu_kms);
+	global_state = dpu_kms_get_global_state(crtc_state->state);
+	if (IS_ERR(global_state))
+		return PTR_ERR(global_state);
+
 	trace_dpu_enc_atomic_check(DRMID(drm_enc));
 
 	/*
@@ -651,12 +654,15 @@ static int dpu_encoder_virt_atomic_check(
 	/* Reserve dynamic resources now. */
 	if (!ret) {
 		/*
-		 * Avoid reserving resources when mode set is pending. Topology
-		 * info may not be available to complete reservation.
+		 * Release and Allocate resources on every modeset
+		 * Dont allocate when active is false.
 		 */
 		if (drm_atomic_crtc_needs_modeset(crtc_state)) {
-			ret = dpu_rm_reserve(&dpu_kms->rm, global_state,
-					drm_enc, crtc_state, topology);
+			dpu_rm_release(global_state, drm_enc);
+
+			if (!crtc_state->active_changed || crtc_state->active)
+				ret = dpu_rm_reserve(&dpu_kms->rm, global_state,
+						drm_enc, crtc_state, topology);
 		}
 	}
 
@@ -1118,7 +1124,6 @@ static void _dpu_encoder_virt_enable_helper(struct drm_encoder *drm_enc)
 {
 	struct dpu_encoder_virt *dpu_enc = NULL;
 	struct msm_drm_private *priv;
-	struct dpu_kms *dpu_kms;
 	int i;
 
 	if (!drm_enc || !drm_enc->dev) {
@@ -1127,7 +1132,6 @@ static void _dpu_encoder_virt_enable_helper(struct drm_encoder *drm_enc)
 	}
 
 	priv = drm_enc->dev->dev_private;
-	dpu_kms = to_dpu_kms(priv->kms);
 
 	dpu_enc = to_dpu_encoder_virt(drm_enc);
 	if (!dpu_enc || !dpu_enc->cur_master) {
@@ -1135,19 +1139,15 @@ static void _dpu_encoder_virt_enable_helper(struct drm_encoder *drm_enc)
 		return;
 	}
 
-	if (dpu_enc->cur_master->hw_mdptop &&
-			dpu_enc->cur_master->hw_mdptop->ops.reset_ubwc)
-		dpu_enc->cur_master->hw_mdptop->ops.reset_ubwc(
-				dpu_enc->cur_master->hw_mdptop,
-				dpu_kms->catalog);
-
 	_dpu_encoder_update_vsync_source(dpu_enc, &dpu_enc->disp_info);
 
-	if (dpu_enc->disp_info.intf_type == DRM_MODE_ENCODER_DSI) {
-		for (i = 0; i < dpu_enc->num_phys_encs; i++) {
-			struct dpu_encoder_phys *phys = dpu_enc->phys_encs[i];
-
-			_dpu_encoder_setup_dither(phys);
+	if (dpu_enc->disp_info.intf_type == DRM_MODE_ENCODER_DSI &&
+			!WARN_ON(dpu_enc->num_phys_encs == 0)) {
+		unsigned bpc = dpu_enc->phys_encs[0]->connector->display_info.bpc;
+		for (i = 0; i < MAX_CHANNELS_PER_ENC; i++) {
+			if (!dpu_enc->hw_pp[i])
+				continue;
+			_dpu_encoder_setup_dither(dpu_enc->hw_pp[i], bpc);
 		}
 	}
 }
@@ -1228,7 +1228,6 @@ static void dpu_encoder_virt_disable(struct drm_encoder *drm_enc)
 	struct dpu_encoder_virt *dpu_enc = NULL;
 	struct msm_drm_private *priv;
 	struct dpu_kms *dpu_kms;
-	struct dpu_global_state *global_state;
 	int i = 0;
 
 	if (!drm_enc) {
@@ -1247,12 +1246,16 @@ static void dpu_encoder_virt_disable(struct drm_encoder *drm_enc)
 
 	priv = drm_enc->dev->dev_private;
 	dpu_kms = to_dpu_kms(priv->kms);
-	global_state = dpu_kms_get_existing_global_state(dpu_kms);
 
 	trace_dpu_enc_disable(DRMID(drm_enc));
 
 	/* wait for idle */
 	dpu_encoder_wait_for_event(drm_enc, MSM_ENC_TX_COMPLETE);
+
+	if (drm_enc->encoder_type == DRM_MODE_ENCODER_TMDS && priv->dp) {
+		if (msm_dp_display_pre_disable(priv->dp, drm_enc))
+			DPU_ERROR_ENC(dpu_enc, "dp display push idle failed\n");
+	}
 
 	dpu_encoder_resource_control(drm_enc, DPU_ENC_RC_EVENT_PRE_STOP);
 
@@ -1262,6 +1265,7 @@ static void dpu_encoder_virt_disable(struct drm_encoder *drm_enc)
 		if (phys->ops.disable)
 			phys->ops.disable(phys);
 	}
+
 
 	/* after phys waits for frame-done, should be no more frames pending */
 	if (atomic_xchg(&dpu_enc->frame_done_timeout_ms, 0)) {
@@ -1276,8 +1280,6 @@ static void dpu_encoder_virt_disable(struct drm_encoder *drm_enc)
 	}
 
 	DPU_DEBUG_ENC(dpu_enc, "encoder disabled\n");
-
-	dpu_rm_release(global_state, drm_enc);
 
 	if (drm_enc->encoder_type == DRM_MODE_ENCODER_TMDS && priv->dp) {
 		if (msm_dp_display_disable(priv->dp, drm_enc))

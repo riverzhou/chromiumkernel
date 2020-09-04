@@ -11,13 +11,16 @@
  */
 
 #include <linux/acpi.h>
+#include <linux/bitfield.h>
 #include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/irq.h>
 #include <linux/kernel.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/pm.h>
 #include <linux/regmap.h>
+#include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 
 #include <linux/iio/buffer.h>
@@ -42,7 +45,6 @@
 #define SX9310_REG_PROX_CTRL0				0x10
 #define   SX9310_REG_PROX_CTRL0_SENSOREN_MASK		GENMASK(3, 0)
 #define   SX9310_REG_PROX_CTRL0_SCANPERIOD_MASK		GENMASK(7, 4)
-#define   SX9310_REG_PROX_CTRL0_SCANPERIOD_SHIFT	4
 #define   SX9310_REG_PROX_CTRL0_SCANPERIOD_15MS		0x01
 #define SX9310_REG_PROX_CTRL1				0x11
 #define SX9310_REG_PROX_CTRL2				0x12
@@ -111,6 +113,7 @@
 
 /* 4 hardware channels, as defined in STAT0: COMB, CS2, CS1 and CS0. */
 #define SX9310_NUM_CHANNELS				4
+static_assert(SX9310_NUM_CHANNELS < BITS_PER_LONG);
 
 struct sx9310_data {
 	/* Serialize access to registers and channel configuration */
@@ -118,20 +121,24 @@ struct sx9310_data {
 	struct i2c_client *client;
 	struct iio_trigger *trig;
 	struct regmap *regmap;
+	struct regulator_bulk_data supplies[2];
 	/*
 	 * Last reading of the proximity status for each channel.
 	 * We only send an event to user space when this changes.
 	 */
-	bool prox_stat[SX9310_NUM_CHANNELS];
+	unsigned long chan_prox_stat;
 	bool trigger_enabled;
-	/* 64-bit data + 64-bit timestamp buffer */
-	__be16 buffer[SX9310_NUM_CHANNELS + 4];
+	/* Ensure correct alignment of timestamp when present. */
+	struct {
+		__be16 channels[SX9310_NUM_CHANNELS];
+		s64 ts __aligned(8);
+	} buffer;
 	/* Remember enabled channels and sample rate during suspend. */
 	unsigned int suspend_ctrl0;
 	struct completion completion;
-	unsigned long chan_read, chan_event;
-	int channel_users[SX9310_NUM_CHANNELS];
-	int whoami;
+	unsigned long chan_read;
+	unsigned long chan_event;
+	unsigned int whoami;
 };
 
 static const struct iio_event_spec sx9310_events[] = {
@@ -316,11 +323,15 @@ static int sx9310_put_event_channel(struct sx9310_data *data, int channel)
 
 static int sx9310_enable_irq(struct sx9310_data *data, unsigned int irq)
 {
+	if (!data->client->irq)
+		return 0;
 	return regmap_update_bits(data->regmap, SX9310_REG_IRQ_MSK, irq, irq);
 }
 
 static int sx9310_disable_irq(struct sx9310_data *data, unsigned int irq)
 {
+	if (!data->client->irq)
+		return 0;
 	return regmap_update_bits(data->regmap, SX9310_REG_IRQ_MSK, irq, 0);
 }
 
@@ -349,8 +360,7 @@ static int sx9310_wait_for_sample(struct sx9310_data *data)
 	if (ret)
 		return ret;
 
-	val = (val & SX9310_REG_PROX_CTRL0_SCANPERIOD_MASK) >>
-	      SX9310_REG_PROX_CTRL0_SCANPERIOD_SHIFT;
+	val = FIELD_GET(SX9310_REG_PROX_CTRL0_SCANPERIOD_MASK, val);
 
 	msleep(sx9310_scan_period_table[val]);
 
@@ -369,11 +379,9 @@ static int sx9310_read_proximity(struct sx9310_data *data,
 	if (ret)
 		goto out;
 
-	if (data->client->irq) {
-		ret = sx9310_enable_irq(data, SX9310_CONVDONE_IRQ);
-		if (ret)
-			goto out_put_channel;
-	}
+	ret = sx9310_enable_irq(data, SX9310_CONVDONE_IRQ);
+	if (ret)
+		goto out_put_channel;
 
 	mutex_unlock(&data->mutex);
 
@@ -396,11 +404,9 @@ static int sx9310_read_proximity(struct sx9310_data *data,
 	*val = sign_extend32(be16_to_cpu(rawval),
 			     chan->address == SX9310_REG_DIFF_MSB ? 11 : 15);
 
-	if (data->client->irq) {
-		ret = sx9310_disable_irq(data, SX9310_CONVDONE_IRQ);
-		if (ret)
-			goto out_put_channel;
-	}
+	ret = sx9310_disable_irq(data, SX9310_CONVDONE_IRQ);
+	if (ret)
+		goto out_put_channel;
 
 	ret = sx9310_put_read_channel(data, chan->channel);
 	if (ret)
@@ -411,8 +417,7 @@ static int sx9310_read_proximity(struct sx9310_data *data,
 	return IIO_VAL_INT;
 
 out_disable_irq:
-	if (data->client->irq)
-		sx9310_disable_irq(data, SX9310_CONVDONE_IRQ);
+	sx9310_disable_irq(data, SX9310_CONVDONE_IRQ);
 out_put_channel:
 	sx9310_put_read_channel(data, chan->channel);
 out:
@@ -430,8 +435,7 @@ static int sx9310_read_samp_freq(struct sx9310_data *data, int *val, int *val2)
 	if (ret)
 		return ret;
 
-	regval = (regval & SX9310_REG_PROX_CTRL0_SCANPERIOD_MASK) >>
-		 SX9310_REG_PROX_CTRL0_SCANPERIOD_SHIFT;
+	regval = FIELD_GET(SX9310_REG_PROX_CTRL0_SCANPERIOD_MASK, regval);
 	*val = sx9310_samp_freq_table[regval].val;
 	*val2 = sx9310_samp_freq_table[regval].val2;
 
@@ -478,9 +482,10 @@ static int sx9310_set_samp_freq(struct sx9310_data *data, int val, int val2)
 
 	mutex_lock(&data->mutex);
 
-	ret = regmap_update_bits(data->regmap, SX9310_REG_PROX_CTRL0,
-				 SX9310_REG_PROX_CTRL0_SCANPERIOD_MASK,
-				 i << SX9310_REG_PROX_CTRL0_SCANPERIOD_SHIFT);
+	ret = regmap_update_bits(
+		data->regmap, SX9310_REG_PROX_CTRL0,
+		SX9310_REG_PROX_CTRL0_SCANPERIOD_MASK,
+		FIELD_PREP(SX9310_REG_PROX_CTRL0_SCANPERIOD_MASK, i));
 
 	mutex_unlock(&data->mutex);
 
@@ -524,6 +529,7 @@ static void sx9310_push_events(struct iio_dev *indio_dev)
 	unsigned int val, chan;
 	struct sx9310_data *data = iio_priv(indio_dev);
 	s64 timestamp = iio_get_time_ns(indio_dev);
+	unsigned long prox_changed;
 
 	/* Read proximity state on all channels */
 	ret = regmap_read(data->regmap, SX9310_REG_STAT0, &val);
@@ -532,24 +538,23 @@ static void sx9310_push_events(struct iio_dev *indio_dev)
 		return;
 	}
 
-	for_each_set_bit(chan, &data->chan_event, SX9310_NUM_CHANNELS) {
+	/*
+	 * Only iterate over channels with changes on proximity status that have
+	 * events enabled.
+	 */
+	prox_changed = (data->chan_prox_stat ^ val) & data->chan_event;
+
+	for_each_set_bit(chan, &prox_changed, SX9310_NUM_CHANNELS) {
 		int dir;
 		u64 ev;
-		bool new_prox;
 
-		new_prox = val & BIT(chan);
-
-		if (new_prox == data->prox_stat[chan])
-			/* No change on this channel. */
-			continue;
-
-		dir = new_prox ? IIO_EV_DIR_FALLING : IIO_EV_DIR_RISING;
+		dir = val & BIT(chan) ? IIO_EV_DIR_FALLING : IIO_EV_DIR_RISING;
 		ev = IIO_UNMOD_EVENT_CODE(IIO_PROXIMITY, chan,
 					  IIO_EV_TYPE_THRESH, dir);
 
 		iio_push_event(indio_dev, ev, timestamp);
-		data->prox_stat[chan] = new_prox;
 	}
+	data->chan_prox_stat = val;
 }
 
 static irqreturn_t sx9310_irq_thread_handler(int irq, void *private)
@@ -689,10 +694,10 @@ static irqreturn_t sx9310_trigger_handler(int irq, void *private)
 		if (ret)
 			goto out;
 
-		data->buffer[i++] = val;
+		data->buffer.channels[i++] = val;
 	}
 
-	iio_push_to_buffers_with_timestamp(indio_dev, data->buffer,
+	iio_push_to_buffers_with_timestamp(indio_dev, &data->buffer,
 					   pf->timestamp);
 
 out:
@@ -808,7 +813,7 @@ static int sx9310_init_compensation(struct iio_dev *indio_dev)
 	if (ret) {
 		if (ret == -ETIMEDOUT)
 			dev_err(&data->client->dev,
-				"0x02 << 3l compensation timed out: 0x%02x",
+				"initial compensation timed out: 0x%02x\n",
 				val);
 		return ret;
 	}
@@ -847,13 +852,14 @@ static int sx9310_init_device(struct iio_dev *indio_dev)
 }
 
 static int sx9310_set_indio_dev_name(struct device *dev,
-				     struct iio_dev *indio_dev, int whoami)
+				     struct iio_dev *indio_dev,
+				     unsigned int whoami)
 {
 	unsigned int long ddata;
 
 	ddata = (uintptr_t)device_get_match_data(dev);
 	if (ddata != whoami) {
-		dev_err(dev, "WHOAMI does not match device data: %u", whoami);
+		dev_err(dev, "WHOAMI does not match device data: %u\n", whoami);
 		return -ENODEV;
 	}
 
@@ -865,11 +871,18 @@ static int sx9310_set_indio_dev_name(struct device *dev,
 		indio_dev->name = "sx9311";
 		break;
 	default:
-		dev_err(dev, "unexpected WHOAMI response: %u", whoami);
+		dev_err(dev, "unexpected WHOAMI response: %u\n", whoami);
 		return -ENODEV;
 	}
 
 	return 0;
+}
+
+static void sx9310_regulator_disable(void *_data)
+{
+	struct sx9310_data *data = _data;
+
+	regulator_bulk_disable(ARRAY_SIZE(data->supplies), data->supplies);
 }
 
 static int sx9310_probe(struct i2c_client *client)
@@ -885,12 +898,29 @@ static int sx9310_probe(struct i2c_client *client)
 
 	data = iio_priv(indio_dev);
 	data->client = client;
+	data->supplies[0].supply = "vdd";
+	data->supplies[1].supply = "svdd";
 	mutex_init(&data->mutex);
 	init_completion(&data->completion);
 
 	data->regmap = devm_regmap_init_i2c(client, &sx9310_regmap_config);
 	if (IS_ERR(data->regmap))
 		return PTR_ERR(data->regmap);
+
+	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(data->supplies),
+				      data->supplies);
+	if (ret)
+		return ret;
+
+	ret = regulator_bulk_enable(ARRAY_SIZE(data->supplies), data->supplies);
+	if (ret)
+		return ret;
+	/* Must wait for Tpor time after initial power up */
+	usleep_range(1000, 1100);
+
+	ret = devm_add_action_or_reset(dev, sx9310_regulator_disable, data);
+	if (ret)
+		return ret;
 
 	ret = regmap_read(data->regmap, SX9310_REG_WHOAMI, &data->whoami);
 	if (ret) {
@@ -903,7 +933,6 @@ static int sx9310_probe(struct i2c_client *client)
 		return ret;
 
 	ACPI_COMPANION_SET(&indio_dev->dev, ACPI_COMPANION(dev));
-	indio_dev->dev.parent = dev;
 	indio_dev->channels = sx9310_channels;
 	indio_dev->num_channels = ARRAY_SIZE(sx9310_channels);
 	indio_dev->info = &sx9310_info;
@@ -918,7 +947,7 @@ static int sx9310_probe(struct i2c_client *client)
 		ret = devm_request_threaded_irq(dev, client->irq,
 						sx9310_irq_handler,
 						sx9310_irq_thread_handler,
-						IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+						IRQF_ONESHOT,
 						"sx9310_event", indio_dev);
 		if (ret)
 			return ret;
@@ -988,19 +1017,14 @@ static int __maybe_unused sx9310_resume(struct device *dev)
 
 	ret = regmap_write(data->regmap, SX9310_REG_PROX_CTRL0,
 			   data->suspend_ctrl0);
-	if (ret)
-		goto out;
-
-	mutex_unlock(&data->mutex);
-
-	enable_irq(data->client->irq);
-
-	return 0;
 
 out:
 	mutex_unlock(&data->mutex);
+	if (ret)
+		return ret;
 
-	return ret;
+	enable_irq(data->client->irq);
+	return 0;
 }
 
 static const struct dev_pm_ops sx9310_pm_ops = {
@@ -1015,8 +1039,8 @@ static const struct acpi_device_id sx9310_acpi_match[] = {
 MODULE_DEVICE_TABLE(acpi, sx9310_acpi_match);
 
 static const struct of_device_id sx9310_of_match[] = {
-	{ .compatible = "semtech,sx9310" },
-	{ .compatible = "semtech,sx9311" },
+	{ .compatible = "semtech,sx9310", (void *)SX9310_WHOAMI_VALUE },
+	{ .compatible = "semtech,sx9311", (void *)SX9311_WHOAMI_VALUE },
 	{}
 };
 MODULE_DEVICE_TABLE(of, sx9310_of_match);

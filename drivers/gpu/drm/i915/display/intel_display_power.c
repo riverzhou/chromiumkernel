@@ -19,6 +19,8 @@
 #include "intel_tc.h"
 #include "intel_vga.h"
 
+static const struct i915_power_well_ops icl_tc_phy_aux_power_well_ops;
+
 bool intel_display_power_well_is_enabled(struct drm_i915_private *dev_priv,
 					 enum i915_power_well_id power_well_id);
 
@@ -150,6 +152,8 @@ intel_display_power_domain_str(enum intel_display_power_domain domain)
 		return "GT_IRQ";
 	case POWER_DOMAIN_DPLL_DC_OFF:
 		return "DPLL_DC_OFF";
+	case POWER_DOMAIN_TC_COLD_OFF:
+		return "TC_COLD_OFF";
 	default:
 		MISSING_CASE(domain);
 		return "?";
@@ -280,6 +284,70 @@ static void hsw_power_well_pre_disable(struct drm_i915_private *dev_priv,
 		gen8_irq_power_well_pre_disable(dev_priv, irq_pipe_mask);
 }
 
+#define ICL_AUX_PW_TO_CH(pw_idx)	\
+	((pw_idx) - ICL_PW_CTL_IDX_AUX_A + AUX_CH_A)
+
+#define ICL_TBT_AUX_PW_TO_CH(pw_idx)	\
+	((pw_idx) - ICL_PW_CTL_IDX_AUX_TBT1 + AUX_CH_C)
+
+static enum aux_ch icl_tc_phy_aux_ch(struct drm_i915_private *dev_priv,
+				     struct i915_power_well *power_well)
+{
+	int pw_idx = power_well->desc->hsw.idx;
+
+	return power_well->desc->hsw.is_tc_tbt ? ICL_TBT_AUX_PW_TO_CH(pw_idx) :
+						 ICL_AUX_PW_TO_CH(pw_idx);
+}
+
+static struct intel_digital_port *
+aux_ch_to_digital_port(struct drm_i915_private *dev_priv,
+		       enum aux_ch aux_ch)
+{
+	struct intel_digital_port *dig_port = NULL;
+	struct intel_encoder *encoder;
+
+	for_each_intel_encoder(&dev_priv->drm, encoder) {
+		/* We'll check the MST primary port */
+		if (encoder->type == INTEL_OUTPUT_DP_MST)
+			continue;
+
+		dig_port = enc_to_dig_port(&encoder->base);
+		if (!dig_port)
+			continue;
+
+		if (dig_port->aux_ch != aux_ch) {
+			dig_port = NULL;
+			continue;
+		}
+
+		break;
+	}
+
+	return dig_port;
+}
+
+static bool tc_phy_aux_timeout_expected(struct drm_i915_private *dev_priv,
+					struct i915_power_well *power_well)
+{
+	/* An AUX timeout is expected if the TBT DP tunnel is down. */
+	if (power_well->desc->hsw.is_tc_tbt)
+		return true;
+
+	/*
+	 * An AUX timeout is expected because we enable TC legacy port aux
+	 * to hold port out of TC cold
+	 */
+	if (INTEL_GEN(dev_priv) == 11 &&
+	    power_well->desc->ops == &icl_tc_phy_aux_power_well_ops) {
+		enum aux_ch aux_ch = icl_tc_phy_aux_ch(dev_priv, power_well);
+		struct intel_digital_port *dig_port = aux_ch_to_digital_port(dev_priv, aux_ch);
+
+		return dig_port->tc_legacy_port;
+	}
+
+	return false;
+}
+
 static void hsw_wait_for_power_well_enable(struct drm_i915_private *dev_priv,
 					   struct i915_power_well *power_well)
 {
@@ -292,8 +360,8 @@ static void hsw_wait_for_power_well_enable(struct drm_i915_private *dev_priv,
 		DRM_DEBUG_KMS("%s power well enable timeout\n",
 			      power_well->desc->name);
 
-		/* An AUX timeout is expected if the TBT DP tunnel is down. */
-		WARN_ON(!power_well->desc->hsw.is_tc_tbt);
+		WARN_ON(!tc_phy_aux_timeout_expected(dev_priv, power_well));
+
 	}
 }
 
@@ -349,16 +417,16 @@ static void gen9_wait_for_power_well_fuses(struct drm_i915_private *dev_priv,
 				      SKL_FUSE_PG_DIST_STATUS(pg), 1));
 }
 
-static void hsw_power_well_enable(struct drm_i915_private *dev_priv,
-				  struct i915_power_well *power_well)
+static void hsw_power_well_enable_prepare(struct drm_i915_private *dev_priv,
+					  struct i915_power_well *power_well)
 {
 	const struct i915_power_well_regs *regs = power_well->desc->hsw.regs;
 	int pw_idx = power_well->desc->hsw.idx;
-	bool wait_fuses = power_well->desc->hsw.has_fuses;
-	enum skl_power_gate uninitialized_var(pg);
 	u32 val;
 
-	if (wait_fuses) {
+	if (power_well->desc->hsw.has_fuses) {
+		enum skl_power_gate pg;
+
 		pg = INTEL_GEN(dev_priv) >= 11 ? ICL_PW_CTL_IDX_TO_PG(pw_idx) :
 						 SKL_PW_CTL_IDX_TO_PG(pw_idx);
 		/*
@@ -374,23 +442,44 @@ static void hsw_power_well_enable(struct drm_i915_private *dev_priv,
 
 	val = I915_READ(regs->driver);
 	I915_WRITE(regs->driver, val | HSW_PWR_WELL_CTL_REQ(pw_idx));
+}
+
+static void hsw_power_well_enable_complete(struct drm_i915_private *dev_priv,
+					   struct i915_power_well *power_well)
+{
+	int pw_idx = power_well->desc->hsw.idx;
+
 	hsw_wait_for_power_well_enable(dev_priv, power_well);
 
 	/* Display WA #1178: cnl */
 	if (IS_CANNONLAKE(dev_priv) &&
 	    pw_idx >= GLK_PW_CTL_IDX_AUX_B &&
 	    pw_idx <= CNL_PW_CTL_IDX_AUX_F) {
+		u32 val;
+
 		val = I915_READ(CNL_AUX_ANAOVRD1(pw_idx));
 		val |= CNL_AUX_ANAOVRD1_ENABLE | CNL_AUX_ANAOVRD1_LDO_BYPASS;
 		I915_WRITE(CNL_AUX_ANAOVRD1(pw_idx), val);
 	}
 
-	if (wait_fuses)
+	if (power_well->desc->hsw.has_fuses) {
+		enum skl_power_gate pg;
+
+		pg = INTEL_GEN(dev_priv) >= 11 ? ICL_PW_CTL_IDX_TO_PG(pw_idx) :
+						 SKL_PW_CTL_IDX_TO_PG(pw_idx);
 		gen9_wait_for_power_well_fuses(dev_priv, pg);
+	}
 
 	hsw_power_well_post_enable(dev_priv,
 				   power_well->desc->hsw.irq_pipe_mask,
 				   power_well->desc->hsw.has_vga);
+}
+
+static void hsw_power_well_enable(struct drm_i915_private *dev_priv,
+				  struct i915_power_well *power_well)
+{
+	hsw_power_well_enable_prepare(dev_priv, power_well);
+	hsw_power_well_enable_complete(dev_priv, power_well);
 }
 
 static void hsw_power_well_disable(struct drm_i915_private *dev_priv,
@@ -460,21 +549,6 @@ icl_combo_phy_aux_power_well_disable(struct drm_i915_private *dev_priv,
 	hsw_wait_for_power_well_disable(dev_priv, power_well);
 }
 
-#define ICL_AUX_PW_TO_CH(pw_idx)	\
-	((pw_idx) - ICL_PW_CTL_IDX_AUX_A + AUX_CH_A)
-
-#define ICL_TBT_AUX_PW_TO_CH(pw_idx)	\
-	((pw_idx) - ICL_PW_CTL_IDX_AUX_TBT1 + AUX_CH_C)
-
-static enum aux_ch icl_tc_phy_aux_ch(struct drm_i915_private *dev_priv,
-				     struct i915_power_well *power_well)
-{
-	int pw_idx = power_well->desc->hsw.idx;
-
-	return power_well->desc->hsw.is_tc_tbt ? ICL_TBT_AUX_PW_TO_CH(pw_idx) :
-						 ICL_AUX_PW_TO_CH(pw_idx);
-}
-
 #if IS_ENABLED(CONFIG_DRM_I915_DEBUG_RUNTIME_PM)
 
 static u64 async_put_domains_mask(struct i915_power_domains *power_domains);
@@ -491,42 +565,18 @@ static int power_well_async_ref_count(struct drm_i915_private *dev_priv,
 }
 
 static void icl_tc_port_assert_ref_held(struct drm_i915_private *dev_priv,
-					struct i915_power_well *power_well)
+					struct i915_power_well *power_well,
+					struct intel_digital_port *dig_port)
 {
-	enum aux_ch aux_ch = icl_tc_phy_aux_ch(dev_priv, power_well);
-	struct intel_digital_port *dig_port = NULL;
-	struct intel_encoder *encoder;
-
 	/* Bypass the check if all references are released asynchronously */
 	if (power_well_async_ref_count(dev_priv, power_well) ==
 	    power_well->count)
 		return;
 
-	aux_ch = icl_tc_phy_aux_ch(dev_priv, power_well);
-
-	for_each_intel_encoder(&dev_priv->drm, encoder) {
-		enum phy phy = intel_port_to_phy(dev_priv, encoder->port);
-
-		if (!intel_phy_is_tc(dev_priv, phy))
-			continue;
-
-		/* We'll check the MST primary port */
-		if (encoder->type == INTEL_OUTPUT_DP_MST)
-			continue;
-
-		dig_port = enc_to_dig_port(&encoder->base);
-		if (WARN_ON(!dig_port))
-			continue;
-
-		if (dig_port->aux_ch != aux_ch) {
-			dig_port = NULL;
-			continue;
-		}
-
-		break;
-	}
-
 	if (WARN_ON(!dig_port))
+		return;
+
+	if (INTEL_GEN(dev_priv) == 11 && dig_port->tc_legacy_port)
 		return;
 
 	WARN_ON(!intel_tc_port_ref_held(dig_port));
@@ -535,7 +585,8 @@ static void icl_tc_port_assert_ref_held(struct drm_i915_private *dev_priv,
 #else
 
 static void icl_tc_port_assert_ref_held(struct drm_i915_private *dev_priv,
-					struct i915_power_well *power_well)
+					struct i915_power_well *power_well,
+					struct intel_digital_port *dig_port)
 {
 }
 
@@ -543,14 +594,37 @@ static void icl_tc_port_assert_ref_held(struct drm_i915_private *dev_priv,
 
 #define TGL_AUX_PW_TO_TC_PORT(pw_idx)	((pw_idx) - TGL_PW_CTL_IDX_AUX_TC1)
 
+static void icl_tc_cold_exit(struct drm_i915_private *i915)
+{
+	int ret, tries = 0;
+
+	while (1) {
+		ret = sandybridge_pcode_write_timeout(i915,
+						      ICL_PCODE_EXIT_TCCOLD,
+						      0, 250, 1);
+		if (ret != -EAGAIN || ++tries == 3)
+			break;
+		msleep(1);
+	}
+
+	/* Spec states that TC cold exit can take up to 1ms to complete */
+	if (!ret)
+		msleep(1);
+
+	/* TODO: turn failure into a error as soon i915 CI updates ICL IFWI */
+	drm_dbg_kms(&i915->drm, "TC cold block %s\n", ret ? "failed" :
+		    "succeeded");
+}
+
 static void
 icl_tc_phy_aux_power_well_enable(struct drm_i915_private *dev_priv,
 				 struct i915_power_well *power_well)
 {
 	enum aux_ch aux_ch = icl_tc_phy_aux_ch(dev_priv, power_well);
+	struct intel_digital_port *dig_port = aux_ch_to_digital_port(dev_priv, aux_ch);
 	u32 val;
 
-	icl_tc_port_assert_ref_held(dev_priv, power_well);
+	icl_tc_port_assert_ref_held(dev_priv, power_well, dig_port);
 
 	val = I915_READ(DP_AUX_CH_CTL(aux_ch));
 	val &= ~DP_AUX_CH_CTL_TBT_IO;
@@ -558,7 +632,12 @@ icl_tc_phy_aux_power_well_enable(struct drm_i915_private *dev_priv,
 		val |= DP_AUX_CH_CTL_TBT_IO;
 	I915_WRITE(DP_AUX_CH_CTL(aux_ch), val);
 
-	hsw_power_well_enable(dev_priv, power_well);
+	hsw_power_well_enable_prepare(dev_priv, power_well);
+
+	if (INTEL_GEN(dev_priv) == 11 && dig_port->tc_legacy_port)
+		icl_tc_cold_exit(dev_priv);
+
+	hsw_power_well_enable_complete(dev_priv, power_well);
 
 	if (INTEL_GEN(dev_priv) >= 12 && !power_well->desc->hsw.is_tc_tbt) {
 		enum tc_port tc_port;
@@ -576,7 +655,10 @@ static void
 icl_tc_phy_aux_power_well_disable(struct drm_i915_private *dev_priv,
 				  struct i915_power_well *power_well)
 {
-	icl_tc_port_assert_ref_held(dev_priv, power_well);
+	enum aux_ch aux_ch = icl_tc_phy_aux_ch(dev_priv, power_well);
+	struct intel_digital_port *dig_port = aux_ch_to_digital_port(dev_priv, aux_ch);
+
+	icl_tc_port_assert_ref_held(dev_priv, power_well, dig_port);
 
 	hsw_power_well_disable(dev_priv, power_well);
 }
@@ -2726,6 +2808,21 @@ void intel_display_power_put(struct drm_i915_private *dev_priv,
 #define TGL_AUX_I_TBT6_IO_POWER_DOMAINS (	\
 	BIT_ULL(POWER_DOMAIN_AUX_I_TBT))
 
+#define TGL_TC_COLD_OFF_POWER_DOMAINS (		\
+	BIT_ULL(POWER_DOMAIN_AUX_D)	|	\
+	BIT_ULL(POWER_DOMAIN_AUX_E)	|	\
+	BIT_ULL(POWER_DOMAIN_AUX_F)	|	\
+	BIT_ULL(POWER_DOMAIN_AUX_G)	|	\
+	BIT_ULL(POWER_DOMAIN_AUX_H)	|	\
+	BIT_ULL(POWER_DOMAIN_AUX_I)	|	\
+	BIT_ULL(POWER_DOMAIN_AUX_D_TBT)	|	\
+	BIT_ULL(POWER_DOMAIN_AUX_E_TBT)	|	\
+	BIT_ULL(POWER_DOMAIN_AUX_F_TBT)	|	\
+	BIT_ULL(POWER_DOMAIN_AUX_G_TBT)	|	\
+	BIT_ULL(POWER_DOMAIN_AUX_H_TBT)	|	\
+	BIT_ULL(POWER_DOMAIN_AUX_I_TBT)	|	\
+	BIT_ULL(POWER_DOMAIN_TC_COLD_OFF))
+
 static const struct i915_power_well_ops i9xx_always_on_power_well_ops = {
 	.sync_hw = i9xx_power_well_sync_hw_noop,
 	.enable = i9xx_always_on_power_well_noop,
@@ -3828,6 +3925,91 @@ static const struct i915_power_well_desc ehl_power_wells[] = {
 	},
 };
 
+static void
+tgl_tc_cold_request(struct drm_i915_private *i915, bool block)
+{
+	u8 tries = 0;
+	int ret;
+
+	while (1) {
+		u32 low_val;
+		u32 high_val = 0;
+
+		if (block)
+			low_val = TGL_PCODE_EXIT_TCCOLD_DATA_L_BLOCK_REQ;
+		else
+			low_val = TGL_PCODE_EXIT_TCCOLD_DATA_L_UNBLOCK_REQ;
+
+		/*
+		 * Spec states that we should timeout the request after 200us
+		 * but the function below will timeout after 500us
+		 */
+		ret = sandybridge_pcode_read(i915, TGL_PCODE_TCCOLD, &low_val,
+					     &high_val);
+		if (ret == 0) {
+			if (block &&
+			    (low_val & TGL_PCODE_EXIT_TCCOLD_DATA_L_EXIT_FAILED))
+				ret = -EIO;
+			else
+				break;
+		}
+
+		if (++tries == 3)
+			break;
+
+		msleep(1);
+	}
+
+	if (ret)
+		drm_err(&i915->drm, "TC cold %sblock failed\n",
+			block ? "" : "un");
+	else
+		drm_dbg_kms(&i915->drm, "TC cold %sblock succeeded\n",
+			    block ? "" : "un");
+}
+
+static void
+tgl_tc_cold_off_power_well_enable(struct drm_i915_private *i915,
+				  struct i915_power_well *power_well)
+{
+	tgl_tc_cold_request(i915, true);
+}
+
+static void
+tgl_tc_cold_off_power_well_disable(struct drm_i915_private *i915,
+				   struct i915_power_well *power_well)
+{
+	tgl_tc_cold_request(i915, false);
+}
+
+static void
+tgl_tc_cold_off_power_well_sync_hw(struct drm_i915_private *i915,
+				   struct i915_power_well *power_well)
+{
+	if (power_well->count > 0)
+		tgl_tc_cold_off_power_well_enable(i915, power_well);
+	else
+		tgl_tc_cold_off_power_well_disable(i915, power_well);
+}
+
+static bool
+tgl_tc_cold_off_power_well_is_enabled(struct drm_i915_private *dev_priv,
+				      struct i915_power_well *power_well)
+{
+	/*
+	 * Not the correctly implementation but there is no way to just read it
+	 * from PCODE, so returning count to avoid state mismatch errors
+	 */
+	return power_well->count;
+}
+
+static const struct i915_power_well_ops tgl_tc_cold_off_ops = {
+	.sync_hw = tgl_tc_cold_off_power_well_sync_hw,
+	.enable = tgl_tc_cold_off_power_well_enable,
+	.disable = tgl_tc_cold_off_power_well_disable,
+	.is_enabled = tgl_tc_cold_off_power_well_is_enabled,
+};
+
 static const struct i915_power_well_desc tgl_power_wells[] = {
 	{
 		.name = "always-on",
@@ -3968,6 +4150,12 @@ static const struct i915_power_well_desc tgl_power_wells[] = {
 			.hsw.regs = &icl_ddi_power_well_regs,
 			.hsw.idx = TGL_PW_CTL_IDX_DDI_TC6,
 		},
+	},
+	{
+		.name = "TC cold off",
+		.domains = TGL_TC_COLD_OFF_POWER_DOMAINS,
+		.ops = &tgl_tc_cold_off_ops,
+		.id = DISP_PW_ID_NONE,
 	},
 	{
 		.name = "AUX A",

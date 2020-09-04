@@ -31,7 +31,7 @@ struct dp_aux_private {
 	struct drm_dp_aux dp_aux;
 };
 
-static const char * dp_aux_get_error(u32 aux_error)
+static const char *dp_aux_get_error(u32 aux_error)
 {
 	switch (aux_error) {
 	case DP_AUX_ERR_NONE:
@@ -94,6 +94,7 @@ static u32 dp_aux_write(struct dp_aux_private *aux,
 	}
 
 	dp_catalog_aux_clear_trans(aux->catalog, false);
+	dp_catalog_aux_clear_hw_interrupts(aux->catalog);
 
 	reg = 0; /* Transaction number == 1 */
 	if (!aux->native) { /* i2c */
@@ -187,10 +188,12 @@ static void dp_aux_native_handler(struct dp_aux_private *aux)
 		aux->aux_error_num = DP_AUX_ERR_ADDR;
 	else if (isr & DP_INTR_TIMEOUT)
 		aux->aux_error_num = DP_AUX_ERR_TOUT;
-	if (isr & DP_INTR_NACK_DEFER)
+	else if (isr & DP_INTR_NACK_DEFER)
 		aux->aux_error_num = DP_AUX_ERR_NACK;
-	if (isr & DP_INTR_AUX_ERROR)
-		aux->aux_error_num = DP_AUX_ERR_DPPHY_AUX;
+	else if (isr & DP_INTR_AUX_ERROR) {
+		aux->aux_error_num = DP_AUX_ERR_PHY;
+		dp_catalog_aux_clear_hw_interrupts(aux->catalog);
+	}
 
 	complete(&aux->comp);
 }
@@ -215,6 +218,10 @@ static void dp_aux_i2c_handler(struct dp_aux_private *aux)
 			aux->aux_error_num = DP_AUX_ERR_NACK;
 		if (isr & DP_INTR_I2C_DEFER)
 			aux->aux_error_num = DP_AUX_ERR_DEFER;
+		if (isr & DP_INTR_AUX_ERROR) {
+			aux->aux_error_num = DP_AUX_ERR_PHY;
+			dp_catalog_aux_clear_hw_interrupts(aux->catalog);
+		}
 	}
 
 	complete(&aux->comp);
@@ -246,6 +253,7 @@ static void dp_aux_update_offset_and_segment(struct dp_aux_private *aux,
  *
  * @aux: DP AUX private structure
  * @input_msg: input message from DRM upstream APIs
+ * @send_seg: send the segment to sink
  *
  * return: void
  *
@@ -253,17 +261,28 @@ static void dp_aux_update_offset_and_segment(struct dp_aux_private *aux,
  * sinks that do not handle the i2c middle-of-transaction flag correctly.
  */
 static void dp_aux_transfer_helper(struct dp_aux_private *aux,
-				   struct drm_dp_aux_msg *input_msg)
+				   struct drm_dp_aux_msg *input_msg,
+				   bool send_seg)
 {
 	struct drm_dp_aux_msg helper_msg;
 	u32 message_size = 0x10;
 	u32 segment_address = 0x30;
+	u32 const edid_block_length = 0x80;
 	bool i2c_mot = input_msg->request & DP_AUX_I2C_MOT;
 	bool i2c_read = input_msg->request &
 		(DP_AUX_I2C_READ & DP_AUX_NATIVE_READ);
 
 	if (!i2c_mot || !i2c_read || (input_msg->size == 0))
 		return;
+
+	/*
+	 * Sending the segment value and EDID offset will be performed
+	 * from the DRM upstream EDID driver for each block. Avoid
+	 * duplicate AUX transactions related to this while reading the
+	 * first 16 bytes of each block.
+	 */
+	if (!(aux->offset % edid_block_length) || !send_seg)
+		goto end;
 
 	aux->read = false;
 	aux->cmd_busy = true;
@@ -277,11 +296,14 @@ static void dp_aux_transfer_helper(struct dp_aux_private *aux,
 	 * since we are overriding the middle-of-transaction flag for read
 	 * transactions.
 	 */
-	memset(&helper_msg, 0, sizeof(helper_msg));
-	helper_msg.address = segment_address;
-	helper_msg.buffer = &aux->segment;
-	helper_msg.size = 1;
-	dp_aux_cmd_fifo_tx(aux, &helper_msg);
+
+	if (aux->segment) {
+		memset(&helper_msg, 0, sizeof(helper_msg));
+		helper_msg.address = segment_address;
+		helper_msg.buffer = &aux->segment;
+		helper_msg.size = 1;
+		dp_aux_cmd_fifo_tx(aux, &helper_msg);
+	}
 
 	/*
 	 * Send the offset address for every i2c read in which the
@@ -295,8 +317,9 @@ static void dp_aux_transfer_helper(struct dp_aux_private *aux,
 	helper_msg.buffer = &aux->offset;
 	helper_msg.size = 1;
 	dp_aux_cmd_fifo_tx(aux, &helper_msg);
-	aux->offset += message_size;
 
+end:
+	aux->offset += message_size;
 	if (aux->offset == 0x80 || aux->offset == 0x100)
 		aux->segment = 0x0; /* reset segment at end of block */
 }
@@ -338,7 +361,7 @@ static ssize_t dp_aux_transfer(struct drm_dp_aux *dp_aux,
 	}
 
 	dp_aux_update_offset_and_segment(aux, msg);
-	dp_aux_transfer_helper(aux, msg);
+	dp_aux_transfer_helper(aux, msg, true);
 
 	aux->read = msg->request & (DP_AUX_I2C_READ & DP_AUX_NATIVE_READ);
 	aux->cmd_busy = true;
@@ -361,8 +384,7 @@ static ssize_t dp_aux_transfer(struct drm_dp_aux *dp_aux,
 					PHY_AUX_CFG1);
 			dp_catalog_aux_reset(aux->catalog);
 		}
-		if (aux->aux_error_num == DP_AUX_ERR_DPPHY_AUX)
-			usleep_range(400, 400); /* need 400us before next try */
+		usleep_range(400, 500); /* at least 400us to next try */
 		goto unlock_exit;
 	}
 

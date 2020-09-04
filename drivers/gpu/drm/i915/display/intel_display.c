@@ -7204,7 +7204,17 @@ intel_aux_power_domain(struct intel_digital_port *dig_port)
 		}
 	}
 
-	switch (dig_port->aux_ch) {
+	return intel_legacy_aux_to_power_domain(dig_port->aux_ch);
+}
+
+/*
+ * Converts aux_ch to power_domain without caring about TBT ports for that use
+ * intel_aux_power_domain()
+ */
+enum intel_display_power_domain
+intel_legacy_aux_to_power_domain(enum aux_ch aux_ch)
+{
+	switch (aux_ch) {
 	case AUX_CH_A:
 		return POWER_DOMAIN_AUX_A;
 	case AUX_CH_B:
@@ -7220,7 +7230,7 @@ intel_aux_power_domain(struct intel_digital_port *dig_port)
 	case AUX_CH_G:
 		return POWER_DOMAIN_AUX_G;
 	default:
-		MISSING_CASE(dig_port->aux_ch);
+		MISSING_CASE(aux_ch);
 		return POWER_DOMAIN_AUX_A;
 	}
 }
@@ -12299,6 +12309,7 @@ static int icl_check_nv12_planes(struct intel_crtc_state *crtc_state)
 	struct intel_atomic_state *state = to_intel_atomic_state(crtc_state->uapi.state);
 	struct intel_plane *plane, *linked;
 	struct intel_plane_state *plane_state;
+	int ret;
 	int i;
 
 	if (INTEL_GEN(dev_priv) < 11)
@@ -12370,6 +12381,11 @@ static int icl_check_nv12_planes(struct intel_crtc_state *crtc_state)
 		intel_plane_copy_uapi_to_hw_state(linked_state, plane_state);
 		linked_state->uapi.src = plane_state->uapi.src;
 		linked_state->uapi.dst = plane_state->uapi.dst;
+
+		/* Update Linked plane crtc same as of main plane */
+		ret = drm_atomic_set_crtc_for_plane(&linked_state->uapi, plane_state->uapi.crtc);
+		if (ret)
+			return ret;
 
 		if (icl_is_hdr_plane(dev_priv, plane->id)) {
 			if (linked->id == PLANE_SPRITE5)
