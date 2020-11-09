@@ -301,6 +301,57 @@ static int snd_intel_dsp_check_dmic(struct pci_dev *pci)
 	return ret;
 }
 
+/* Neverware: DMI information for machines that we allow SOF to be
+ * used on. Eventually we'll probably remove this, but for now we want
+ * to avoid adding a big testing burden.
+ *
+ * [OVER-13135] */
+static const struct dmi_system_id
+neverware_sof_allowed_models[] = {
+	/* [OVER-12896] */
+	{
+		.ident = "Lenovo ThinkPad T14 Gen 1",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
+			DMI_MATCH(DMI_PRODUCT_FAMILY, "ThinkPad T14 Gen 1"),
+		}
+	},
+
+	/* [OVER-10876] */
+	{
+		.ident = "Lenovo ThinkPad X1",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
+			DMI_MATCH(DMI_PRODUCT_FAMILY, "ThinkPad X1 Carbon 7th"),
+		}
+	},
+	{ }
+};
+
+/* Neverware: add "snd_intel_dspcfg.sof_bypass_allow_list=1" to kernel
+ * params to disable the allow list. */
+static bool sof_bypass_allow_list = false;
+module_param(sof_bypass_allow_list, bool, S_IRUGO);
+MODULE_PARM_DESC(sof_bypass_allow_list,
+				 "Neverware: set to true to allow all compatible devices to use SOF");
+
+static int neverware_is_sof_allowed(void)
+{
+	/* Allow the list to be bypassed */
+	if (sof_bypass_allow_list) {
+		printk(KERN_NOTICE "Neverware: SOF allow list disabled");
+		return 1;
+	}
+
+	if (dmi_check_system(neverware_sof_allowed_models)) {
+		printk(KERN_NOTICE "Neverware: allowing SOF");
+		return 1;
+	} else {
+		printk(KERN_WARNING "Neverware: disallowing SOF (may prevent audio devices from working)");
+		return 0;
+	}
+}
+
 int snd_intel_dsp_driver_probe(struct pci_dev *pci)
 {
 	const struct config_entry *cfg;
@@ -333,7 +384,7 @@ int snd_intel_dsp_driver_probe(struct pci_dev *pci)
 	if (!cfg)
 		return SND_INTEL_DSP_DRIVER_ANY;
 
-	if (cfg->flags & FLAG_SOF) {
+	if (cfg->flags & FLAG_SOF && neverware_is_sof_allowed()) {
 		if (cfg->flags & FLAG_SOF_ONLY_IF_DMIC) {
 			if (snd_intel_dsp_check_dmic(pci)) {
 				dev_info(&pci->dev, "Digital mics found on Skylake+ platform, using SOF driver\n");
