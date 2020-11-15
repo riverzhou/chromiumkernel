@@ -325,6 +325,14 @@ neverware_sof_allowed_models[] = {
 			DMI_MATCH(DMI_PRODUCT_FAMILY, "ThinkPad X1 Carbon 7th"),
 		}
 	},
+	/* [OVER-12651] */
+	{
+		.ident = "Dell Latitude 3510",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Latitude 3510"),
+		}
+	},
 	{ }
 };
 
