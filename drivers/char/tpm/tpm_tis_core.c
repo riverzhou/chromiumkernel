@@ -913,8 +913,9 @@ static int tpm_in_neverware_whitelist(const u32 did_vid, unsigned int flags)
 	if (is_tpm1 && vendor_id == TPM_VID_ATMEL && device_id == 0x3204)
 		return 1;
 
-	/* Emulated TPM provided by the swtpm program, used with QEMU */
-	if (is_tpm1 && vendor_id == TPM_VID_IBM && device_id == 0x1)
+	/* Emulated TPM provided by the swtpm program, used with
+	 * QEMU. This comes in both 1.2 and 2.0 variations. */
+	if (vendor_id == TPM_VID_IBM && device_id == 0x1)
 		return 1;
 
 	/* OVER-6255: enable TPM chip in Toshiba TCXWave 6140 tablet kiosk */
