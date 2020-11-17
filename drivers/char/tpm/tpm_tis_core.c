@@ -900,33 +900,29 @@ static int tpm_in_neverware_whitelist(const u32 did_vid, unsigned int flags)
 {
 	const u16 vendor_id = did_vid;  /* truncate */
 	const u16 device_id = did_vid >> 16;
+	const int is_tpm2 = flags & TPM_CHIP_FLAG_TPM2;
+	const int is_tpm1 = !is_tpm2;
 
 	/* Check for machines explicitly whitelisted for TPM 2.0 support */
-	if (dmi_check_system(tpm2_models_whitelist)) {
+	if (is_tpm2 && dmi_check_system(tpm2_models_whitelist)) {
 		if (vendor_id == TPM_VID_WINBOND && device_id == 0xFC)
 			return 1;
 	}
 
-	/* We don't support TPM 2.0 devices at all. Some IDs are shared
-	 * between 1.2 and 2.0 devices. */
-	if (flags & TPM_CHIP_FLAG_TPM2) {
-	  return 0;
-	}
-
 	/* Atmel TPM used in some Dell Latitudes */
-	if (vendor_id == TPM_VID_ATMEL && device_id == 0x3204)
+	if (is_tpm1 && vendor_id == TPM_VID_ATMEL && device_id == 0x3204)
 		return 1;
 
 	/* Emulated TPM provided by the swtpm program, used with QEMU */
-	if (vendor_id == TPM_VID_IBM && device_id == 0x1)
+	if (is_tpm1 && vendor_id == TPM_VID_IBM && device_id == 0x1)
 		return 1;
 
 	/* OVER-6255: enable TPM chip in Toshiba TCXWave 6140 tablet kiosk */
-	if (vendor_id == TPM_VID_WINBOND && device_id == 0xFE)
+	if (is_tpm1 && vendor_id == TPM_VID_WINBOND && device_id == 0xFE)
 		return 1;
 
 	/* the vendor is INFINEON */
-	if (vendor_id == 0x15D1) {
+	if (is_tpm1 && vendor_id == 0x15D1) {
 		/* OVER-10367 HP Elitebook 840 G1 */
 		if (device_id == 0xB)
 			return 1;
