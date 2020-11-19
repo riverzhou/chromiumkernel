@@ -267,7 +267,7 @@ static void evdi_user_framebuffer_destroy(struct drm_framebuffer *fb)
 	EVDI_CHECKPT();
 
 	if (ufb->obj)
-		drm_gem_object_put_unlocked(&ufb->obj->base);
+		drm_gem_object_put(&ufb->obj->base);
 
 	drm_framebuffer_cleanup(fb);
 	kfree(ufb);
@@ -367,7 +367,7 @@ static int evdifb_create(struct drm_fb_helper *helper,
 
 	return ret;
  out_gfree:
-	drm_gem_object_put_unlocked(&ufbdev->ufb.obj->base);
+	drm_gem_object_put(&ufbdev->ufb.obj->base);
  out:
 	return ret;
 }
@@ -392,7 +392,7 @@ static void evdi_fbdev_destroy(__always_unused struct drm_device *dev,
 	drm_fb_helper_fini(&ufbdev->helper);
 	drm_framebuffer_unregister_private(&ufbdev->ufb.base);
 	drm_framebuffer_cleanup(&ufbdev->ufb.base);
-	drm_gem_object_put_unlocked(&ufbdev->ufb.obj->base);
+	drm_gem_object_put(&ufbdev->ufb.obj->base);
 }
 
 int evdi_fbdev_init(struct drm_device *dev)
@@ -409,13 +409,11 @@ int evdi_fbdev_init(struct drm_device *dev)
 	evdi->fbdev = ufbdev;
 	drm_fb_helper_prepare(dev, &ufbdev->helper, &evdi_fb_helper_funcs);
 
-	ret = drm_fb_helper_init(dev, &ufbdev->helper, 1);
+	ret = drm_fb_helper_init(dev, &ufbdev->helper);
 	if (ret) {
 		kfree(ufbdev);
 		return ret;
 	}
-
-	drm_fb_helper_single_add_all_connectors(&ufbdev->helper);
 
 	ret = drm_fb_helper_initial_config(&ufbdev->helper, 32);
 	if (ret) {
@@ -506,10 +504,10 @@ struct drm_framebuffer *evdi_fb_user_fb_create(
 	return &ufb->base;
 
  err_no_mem:
-	drm_gem_object_put(obj);
+	drm_gem_object_put_locked(obj);
 	return ERR_PTR(-ENOMEM);
  err_inval:
 	kfree(ufb);
-	drm_gem_object_put(obj);
+	drm_gem_object_put_locked(obj);
 	return ERR_PTR(-EINVAL);
 }

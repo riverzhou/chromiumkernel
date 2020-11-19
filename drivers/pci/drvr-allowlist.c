@@ -9,8 +9,8 @@
 #include "pci.h"
 
 /*
- * Parameter to disable allowlist (thus allow all drivers to connect
- * to any external PCI devices).
+ * Parameter to essentially disable allowlist code (thus allow all drivers to
+ * connect to any external PCI devices).
  */
 static bool trust_external_pci_devices;
 core_param(trust_external_pci_devices, trust_external_pci_devices, bool, 0444);
@@ -25,6 +25,13 @@ static LIST_HEAD(allowlist);
 static DECLARE_RWSEM(allowlist_sem);
 
 #define TRUNCATED	"...<truncated>\n"
+
+/*
+ * Locks down the binding of drivers to untrusted devices
+ * (No PCI drivers to bind to any new untrusted PCI device)
+ */
+static bool drivers_allowlist_lockdown = true;
+static DECLARE_RWSEM(lockdown_sem);
 
 static ssize_t drivers_allowlist_show(struct bus_type *bus, char *buf)
 {
@@ -104,12 +111,78 @@ out_kfree:
 }
 static BUS_ATTR_RW(drivers_allowlist);
 
+static ssize_t drivers_allowlist_lockdown_show(struct bus_type *bus, char *buf)
+{
+	int ret;
+
+	down_read(&lockdown_sem);
+	ret = sprintf(buf, "%u\n", drivers_allowlist_lockdown);
+	up_read(&lockdown_sem);
+
+	return ret;
+}
+
+static ssize_t
+drivers_allowlist_lockdown_store(struct bus_type *bus, const char *buf,
+				 size_t count)
+{
+	int ret = 0;
+	bool lockdown;
+	struct pci_dev *dev = NULL;
+
+	if (strtobool(buf, &lockdown))
+		return -EINVAL;
+
+	down_write(&lockdown_sem);
+
+	if (lockdown == drivers_allowlist_lockdown) {
+		pr_err("%s: PID:%d [%.20s]: writing same val (%u) again?\n",
+		       __func__, current->pid, current->comm, lockdown);
+		ret = -EINVAL;
+		goto out;
+	}
+
+	ret = count;
+	if (lockdown) {
+		/* Lock the drivers */
+		drivers_allowlist_lockdown = true;
+		goto out;
+	}
+
+	/* Unlock the drivers */
+	drivers_allowlist_lockdown = false;
+
+	/* Attach any devices blocked earlier, subject to allowlist */
+	for_each_pci_dev(dev) {
+		if (dev->untrusted && !device_attach(&dev->dev))
+			pci_dbg(dev, "No driver\n");
+	}
+out:
+	up_write(&lockdown_sem);
+	return ret;
+}
+static BUS_ATTR_RW(drivers_allowlist_lockdown);
+
 static int __init pci_drivers_allowlist_init(void)
 {
+	int ret;
+
 	if (trust_external_pci_devices)
 		return 0;
 
-	return bus_create_file(&pci_bus_type, &bus_attr_drivers_allowlist);
+	ret = bus_create_file(&pci_bus_type, &bus_attr_drivers_allowlist);
+	if (ret) {
+		pr_err("%s: failed to create allowlist in sysfs\n", __func__);
+		return ret;
+	}
+
+	ret = bus_create_file(&pci_bus_type,
+			      &bus_attr_drivers_allowlist_lockdown);
+	if (ret) {
+		pr_err("%s: failed to create allowlist_lockdown\n", __func__);
+		bus_remove_file(&pci_bus_type, &bus_attr_drivers_allowlist);
+	}
+	return ret;
 }
 late_initcall(pci_drivers_allowlist_init);
 
@@ -128,10 +201,50 @@ static bool pci_driver_is_allowed(const char *name)
 	return false;
 }
 
-bool pci_drv_allowed_for_untrusted_devs(struct device_driver *drv)
+bool pci_allowed_to_attach(struct pci_driver *drv, struct pci_dev *dev)
 {
-	if (trust_external_pci_devices || pci_driver_is_allowed(drv->name))
-		return true;
+	char event[16], drvr[32], *reason;
+	char *udev_env[] = { event, drvr, NULL };
 
+	snprintf(drvr, sizeof(drvr), "DRVR=%s", drv->name);
+
+	/* Bypass Allowlist code, if platform wants so */
+	if (trust_external_pci_devices) {
+		reason = "trust_external_pci_devices";
+		goto allowed;
+	}
+
+	/* Allow trusted devices */
+	if (!dev->untrusted) {
+		reason = "trusted device";
+		goto allowed;
+	}
+
+	/* Don't allow any driver attaches, if locked down */
+	down_read(&lockdown_sem);
+	if (drivers_allowlist_lockdown) {
+		up_read(&lockdown_sem);
+		reason = "drivers_allowlist_lockdown enforced";
+		goto not_allowed;
+	}
+	up_read(&lockdown_sem);
+
+	/* Allow if driver is in allowlist */
+	if (pci_driver_is_allowed(drv->name)) {
+		reason = "drvr in allowlist";
+		goto allowed;
+	}
+	reason = "drvr not in allowlist";
+
+not_allowed:
+	pci_err(dev, "attach not allowed to drvr %s [%s]\n", drv->name, reason);
+	snprintf(event, sizeof(event), "EVENT=BLOCKED");
+	kobject_uevent_env(&dev->dev.kobj, KOBJ_CHANGE, udev_env);
 	return false;
+
+allowed:
+	pci_info(dev, "attach allowed to drvr %s [%s]\n", drv->name, reason);
+	snprintf(event, sizeof(event), "EVENT=ALLOWED");
+	kobject_uevent_env(&dev->dev.kobj, KOBJ_CHANGE, udev_env);
+	return true;
 }

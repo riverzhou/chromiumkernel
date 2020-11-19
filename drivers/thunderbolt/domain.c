@@ -800,12 +800,23 @@ int tb_domain_init(void)
 {
 	int ret;
 
+	tb_test_init();
+
+	tb_debugfs_init();
 	ret = tb_xdomain_init();
 	if (ret)
-		return ret;
+		goto err_debugfs;
 	ret = bus_register(&tb_bus_type);
 	if (ret)
-		tb_xdomain_exit();
+		goto err_xdomain;
+
+	return 0;
+
+err_xdomain:
+	tb_xdomain_exit();
+err_debugfs:
+	tb_debugfs_exit();
+	tb_test_exit();
 
 	return ret;
 }
@@ -816,4 +827,6 @@ void tb_domain_exit(void)
 	ida_destroy(&tb_domain_ida);
 	tb_nvm_exit();
 	tb_xdomain_exit();
+	tb_debugfs_exit();
+	tb_test_exit();
 }
