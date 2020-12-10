@@ -20,6 +20,7 @@
 #include <linux/device.h>
 #include <linux/poll.h>
 #include <linux/security.h>
+#include <linux/mount.h>
 
 #include "internal.h"
 
@@ -137,6 +138,27 @@ void debugfs_file_put(struct dentry *dentry)
 }
 EXPORT_SYMBOL_GPL(debugfs_file_put);
 
+
+/* Neverware: check if the given file's path is the DRM master relax
+ * file: /sys/kernel/debug/dri/drm_master_relax. */
+static int neverware_is_file_drm_relax_master(struct file *filp)
+{
+	char *buf = kmalloc(PATH_MAX, GFP_KERNEL);
+	char *path = NULL;
+	int ret = 0;
+
+	if (!buf)
+		return 0;
+
+	path = dentry_path(filp->f_path.dentry, buf, PATH_MAX);
+	if (!IS_ERR(path) && strcmp(path, "/dri/drm_master_relax") == 0)
+		ret = 1;
+
+	kfree(buf);
+
+	return ret;
+}
+
 /*
  * Only permit access to world-readable files when the kernel is locked down.
  * We also need to exclude any file that has ways to write or alter it as root
@@ -151,6 +173,13 @@ static int debugfs_locked_down(struct inode *inode,
 	    !real_fops->unlocked_ioctl &&
 	    !real_fops->compat_ioctl &&
 	    !real_fops->mmap)
+		return 0;
+
+	/* Neverware: allow the access to the drm_master_relax file even
+	 * when the system is locked down. This file is used by frecon to
+	 * allow the browser to drop the DRM master when switching to a
+	 * frecon VT. [OVER-13234] */
+	if (neverware_is_file_drm_relax_master(filp))
 		return 0;
 
 	if (security_locked_down(LOCKDOWN_DEBUGFS))
