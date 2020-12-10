@@ -411,8 +411,7 @@ static int cros_typec_enable_tbt(struct cros_typec_data *typec,
 	if (pd_ctrl->control_flags & USB_PD_CTRL_ACTIVE_LINK_UNIDIR)
 		data.cable_mode |= TBT_CABLE_LINK_TRAINING;
 
-	if (pd_ctrl->cable_gen)
-		data.cable_mode |= TBT_CABLE_ROUNDED;
+	data.cable_mode |= TBT_SET_CABLE_ROUNDED(pd_ctrl->cable_gen);
 
 	/* Enter Mode VDO */
 	data.enter_vdo = TBT_SET_CABLE_SPEED(pd_ctrl->cable_speed);
@@ -537,10 +536,9 @@ static int cros_typec_configure_mux(struct cros_typec_data *typec, int port_num,
 		port->state.mode = TYPEC_STATE_USB;
 		ret = typec_mux_set(port->mux, &port->state);
 	} else {
-		dev_info(typec->dev,
-			 "Unsupported mode requested, mux flags: %x\n",
-			 mux_flags);
-		ret = -ENOTSUPP;
+		dev_dbg(typec->dev,
+			"Unrecognized mode requested, mux flags: %x\n",
+			mux_flags);
 	}
 
 	return ret;

@@ -459,13 +459,6 @@ static inline bool is_root_cfs_rq(struct cfs_rq *cfs_rq)
 	return cfs_rq == root_cfs_rq(cfs_rq);
 }
 
-#ifdef CONFIG_SCHED_CORE
-static inline struct cfs_rq *core_cfs_rq(struct cfs_rq *cfs_rq)
-{
-	return &rq_of(cfs_rq)->core->cfs;
-}
-#endif
-
 static inline u64 cfs_rq_min_vruntime(struct cfs_rq *cfs_rq)
 {
 	return cfs_rq->min_vruntime;
@@ -5265,6 +5258,7 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 	struct cfs_rq *cfs_rq;
 	struct sched_entity *se = &p->se;
 	int idle_h_nr_running = task_has_idle_policy(p);
+	int task_new = !(flags & ENQUEUE_WAKEUP);
 
 	/*
 	 * The code below (indirectly) updates schedutil which looks at
@@ -5336,7 +5330,7 @@ enqueue_throttle:
 		 * into account, but that is not straightforward to implement,
 		 * and the following generally works well enough in practice.
 		 */
-		if (flags & ENQUEUE_WAKEUP)
+		if (!task_new)
 			update_overutilized_status(rq);
 
 	}
