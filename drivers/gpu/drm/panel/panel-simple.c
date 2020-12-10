@@ -62,39 +62,37 @@ struct panel_desc {
 
 	unsigned int bpc;
 
-	/**
-	 * @width: width (in millimeters) of the panel's active display area
-	 * @height: height (in millimeters) of the panel's active display area
-	 */
 	struct {
+		/**
+		 * @size.width: Width (in mm) of the active display area.
+		 */
 		unsigned int width;
+
+		/**
+		 * @size.height: Height (in mm) of the active display area.
+		 */
 		unsigned int height;
 	} size;
 
-	/**
-	 * @prepare: the time (in milliseconds) that it takes for the panel to
-	 *           become ready and start receiving video data
-	 * @hpd_absent_delay: Add this to the prepare delay if we know Hot
-	 *                    Plug Detect isn't used.
-	 * @enable: the time (in milliseconds) that it takes for the panel to
-	 *          display the first valid frame after starting to receive
-	 *          video data
-	 * @disable: the time (in milliseconds) that it takes for the panel to
-	 *           turn the display off (no content is visible)
-	 * @unprepare: the time (in milliseconds) that it takes for the panel
-	 *             to power itself down completely
-	 */
-	struct {
-		unsigned int prepare;
-		unsigned int hpd_absent_delay;
-		unsigned int enable;
-		unsigned int disable;
-		unsigned int unprepare;
-	} delay;
-
 	struct {
 		/**
-		 * @prepare_to_enable: Time between prepare and enable.
+		 * @delay.prepare: Time for the panel to become ready.
+		 *
+		 * The time (in milliseconds) that it takes for the panel to
+		 * become ready and start receiving video data
+		 */
+		unsigned int prepare;
+
+		/**
+		 * @delay.hpd_absent_delay: Time to wait if HPD isn't hooked up.
+		 *
+		 * Add this to the prepare delay if we know Hot Plug Detect
+		 * isn't used.
+		 */
+		unsigned int hpd_absent_delay;
+
+		/**
+		 * @delay.prepare_to_enable: Time between prepare and enable.
 		 *
 		 * The minimum time, in milliseconds, that needs to have passed
 		 * between when prepare finished and enable may begin. If at
@@ -124,35 +122,35 @@ struct panel_desc {
 		unsigned int prepare_to_enable;
 
 		/**
-		 * @unprepare_to_prepare: Time between unprepare and prepare.
+		 * @delay.enable: Time for the panel to display a valid frame.
 		 *
-		 * The minimum time, in milliseconds, that needs to have passed
-		 * between when unprepare finished and prepare may begin. If at
-		 * prepare time less time has passed since unprepare finished,
-		 * the driver waits for the remaining time.
-		 *
-		 * If a fixed unprepare delay is also specified, we'll start
-		 * counting before delaying for the fixed delay.
-		 *
-		 * If a fixed prepare delay is also specified, it will happen
-		 * separately and after we've enforced this minimum. We can't
-		 * overlap this fixed delay with the min time because the
-		 * fixed delay doesn't happen at the start of the function
-		 * if a regulator or enable GPIO was specified.
-		 *
-		 * In other words:
-		 *   unprepare():
-		 *     ...
-		 *     // start counting for unprepare_to_prepare
-		 *     // do fixed unprepare delay
-		 *
-		 *   prepare():
-		 *     // enforce unprepare_to_prepare min time
-		 *     // turn on regulator / set enable GPIO if applicable
-		 *     // do fixed prepare delay
+		 * The time (in milliseconds) that it takes for the panel to
+		 * display the first valid frame after starting to receive
+		 * video data.
 		 */
-		unsigned int unprepare_to_prepare;
-	} min_times;
+		unsigned int enable;
+
+		/**
+		 * @delay.disable: Time for the panel to turn the display off.
+		 *
+		 * The time (in milliseconds) that it takes for the panel to
+		 * turn the display off (no content is visible).
+		 */
+		unsigned int disable;
+
+		/**
+		 * @delay.unprepare: Time to power down completely.
+		 *
+		 * The time (in milliseconds) that it takes for the panel
+		 * to power itself down completely.
+		 *
+		 * This time is used to prevent a future "prepare" from
+		 * starting until at least this many milliseconds has passed.
+		 * If at prepare time less time has passed since unprepare
+		 * finished, the driver waits for the remaining time.
+		 */
+		unsigned int unprepare;
+	} delay;
 
 	u32 bus_format;
 	u32 bus_flags;
@@ -295,7 +293,7 @@ static int panel_simple_get_non_edid_modes(struct panel_simple *panel,
 	return num;
 }
 
-static void panel_simple_wait_min_time(ktime_t start_ktime, unsigned int min_ms)
+static void panel_simple_wait(ktime_t start_ktime, unsigned int min_ms)
 {
 	ktime_t now_ktime, min_ktime;
 
@@ -338,9 +336,6 @@ static int panel_simple_unprepare(struct drm_panel *panel)
 	p->prepared_time = 0;
 	p->unprepared_time = ktime_get();
 
-	if (p->desc->delay.unprepare)
-		msleep(p->desc->delay.unprepare);
-
 	return 0;
 }
 
@@ -379,8 +374,7 @@ static int panel_simple_prepare(struct drm_panel *panel)
 	if (p->prepared_time != 0)
 		return 0;
 
-	panel_simple_wait_min_time(p->unprepared_time,
-				   p->desc->min_times.unprepare_to_prepare);
+	panel_simple_wait(p->unprepared_time, p->desc->delay.unprepare);
 
 	err = regulator_enable(p->supply);
 	if (err < 0) {
@@ -431,8 +425,7 @@ static int panel_simple_enable(struct drm_panel *panel)
 	if (p->desc->delay.enable)
 		msleep(p->desc->delay.enable);
 
-	panel_simple_wait_min_time(p->prepared_time,
-				   p->desc->min_times.prepare_to_enable);
+	panel_simple_wait(p->prepared_time, p->desc->delay.prepare_to_enable);
 
 	p->enabled = true;
 
@@ -1198,7 +1191,6 @@ static const struct panel_desc boe_nv101wxmn51 = {
 static const struct drm_display_mode boe_nv110wtm_n61_modes[] = {
 	{
 		.clock = 207800,
-		.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_NVSYNC,
 		.hdisplay = 2160,
 		.hsync_start = 2160 + 48,
 		.hsync_end = 2160 + 48 + 32,
@@ -1208,10 +1200,10 @@ static const struct drm_display_mode boe_nv110wtm_n61_modes[] = {
 		.vsync_end = 1440 + 3 + 6,
 		.vtotal = 1440 + 3 + 6 + 31,
 		.vrefresh = 60,
+		.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_NVSYNC,
 	},
 	{
 		.clock = 138500,
-		.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_NVSYNC,
 		.hdisplay = 2160,
 		.hsync_start = 2160 + 48,
 		.hsync_end = 2160 + 48 + 32,
@@ -1221,6 +1213,7 @@ static const struct drm_display_mode boe_nv110wtm_n61_modes[] = {
 		.vsync_end = 1440 + 3 + 6,
 		.vtotal = 1440 + 3 + 6 + 31,
 		.vrefresh = 40,
+		.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_NVSYNC,
 	},
 };
 
@@ -1234,10 +1227,8 @@ static const struct panel_desc boe_nv110wtm_n61 = {
 	},
 	.delay = {
 		.hpd_absent_delay = 200,
-	},
-	.min_times = {
 		.prepare_to_enable = 80,
-		.unprepare_to_prepare = 500,
+		.unprepare = 500,
 	},
 	.bus_format = MEDIA_BUS_FMT_RGB888_1X24,
 	.bus_flags = DRM_BUS_FLAG_DATA_MSB_TO_LSB,

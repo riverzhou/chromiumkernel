@@ -963,6 +963,9 @@ int rt5682_headset_detect(struct snd_soc_component *component, int jack_insert)
 			RT5682_HP_CHARGE_PUMP_1,
 			RT5682_OSW_L_MASK | RT5682_OSW_R_MASK,
 			RT5682_OSW_L_EN | RT5682_OSW_R_EN);
+		snd_soc_component_update_bits(component, RT5682_MICBIAS_2,
+			RT5682_PWR_CLK25M_MASK | RT5682_PWR_CLK1M_MASK,
+			RT5682_PWR_CLK25M_PU | RT5682_PWR_CLK1M_PU);
 	} else {
 		rt5682_enable_push_button_irq(component, false);
 		snd_soc_component_update_bits(component, RT5682_CBJ_CTRL_1,
@@ -975,6 +978,9 @@ int rt5682_headset_detect(struct snd_soc_component *component, int jack_insert)
 				RT5682_PWR_ANLG_1, RT5682_PWR_VREF2, 0);
 		snd_soc_component_update_bits(component, RT5682_PWR_ANLG_3,
 			RT5682_PWR_CBJ, 0);
+		snd_soc_component_update_bits(component, RT5682_MICBIAS_2,
+			RT5682_PWR_CLK25M_MASK | RT5682_PWR_CLK1M_MASK,
+			RT5682_PWR_CLK25M_PD | RT5682_PWR_CLK1M_PD);
 
 		rt5682->jack_type = 0;
 	}
@@ -1022,8 +1028,7 @@ static int rt5682_set_jack_detect(struct snd_soc_component *component,
 				RT5682_POW_ANA, RT5682_POW_IRQ |
 				RT5682_POW_JDH | RT5682_POW_ANA);
 			regmap_update_bits(rt5682->regmap, RT5682_PWR_ANLG_2,
-				RT5682_PWR_JDH | RT5682_PWR_JDL,
-				RT5682_PWR_JDH | RT5682_PWR_JDL);
+				RT5682_PWR_JDH, RT5682_PWR_JDH);
 			regmap_update_bits(rt5682->regmap, RT5682_IRQ_CTRL_2,
 				RT5682_JD1_EN_MASK | RT5682_JD1_POL_MASK,
 				RT5682_JD1_EN | RT5682_JD1_POL_NOR);
@@ -1524,15 +1529,34 @@ static int set_dmic_power(struct snd_soc_dapm_widget *w,
 	struct snd_soc_component *component =
 		snd_soc_dapm_to_component(w->dapm);
 	struct rt5682_priv *rt5682 = snd_soc_component_get_drvdata(component);
-	unsigned int delay = 50;
+	unsigned int delay = 50, val;
 
 	if (rt5682->pdata.dmic_delay)
 		delay = rt5682->pdata.dmic_delay;
 
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
+		val = snd_soc_component_read(component, RT5682_GLB_CLK);
+		val &= RT5682_SCLK_SRC_MASK;
+		if (val == RT5682_SCLK_SRC_PLL1 || val == RT5682_SCLK_SRC_PLL2)
+			snd_soc_component_update_bits(component,
+				RT5682_PWR_ANLG_1,
+				RT5682_PWR_VREF2 | RT5682_PWR_MB,
+				RT5682_PWR_VREF2 | RT5682_PWR_MB);
+
 		/*Add delay to avoid pop noise*/
 		msleep(delay);
+		break;
+
+	case SND_SOC_DAPM_POST_PMD:
+		if (!rt5682->jack_type) {
+			if (!snd_soc_dapm_get_pin_status(w->dapm, "MICBIAS"))
+				snd_soc_component_update_bits(component,
+					RT5682_PWR_ANLG_1, RT5682_PWR_MB, 0);
+			if (!snd_soc_dapm_get_pin_status(w->dapm, "Vref2"))
+				snd_soc_component_update_bits(component,
+					RT5682_PWR_ANLG_1, RT5682_PWR_VREF2, 0);
+		}
 		break;
 	}
 
@@ -1639,7 +1663,8 @@ static const struct snd_soc_dapm_widget rt5682_dapm_widgets[] = {
 	SND_SOC_DAPM_SUPPLY("DMIC CLK", SND_SOC_NOPM, 0, 0,
 		set_dmic_clk, SND_SOC_DAPM_PRE_PMU),
 	SND_SOC_DAPM_SUPPLY("DMIC1 Power", RT5682_DMIC_CTRL_1,
-		RT5682_DMIC_1_EN_SFT, 0, set_dmic_power, SND_SOC_DAPM_POST_PMU),
+		RT5682_DMIC_1_EN_SFT, 0, set_dmic_power,
+		SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD),
 
 	/* Boost */
 	SND_SOC_DAPM_PGA("BST1 CBJ", SND_SOC_NOPM,
@@ -2824,6 +2849,7 @@ static int rt5682_probe(struct snd_soc_component *component)
 	struct rt5682_priv *rt5682 = snd_soc_component_get_drvdata(component);
 	struct sdw_slave *slave;
 	unsigned long time;
+	struct snd_soc_dapm_context *dapm = &component->dapm;
 
 #ifdef CONFIG_COMMON_CLK
 	int ret;
@@ -2864,6 +2890,9 @@ static int rt5682_probe(struct snd_soc_component *component)
 #endif
 	}
 
+	snd_soc_dapm_disable_pin(dapm, "MICBIAS");
+	snd_soc_dapm_disable_pin(dapm, "Vref2");
+	snd_soc_dapm_sync(dapm);
 	return 0;
 }
 
@@ -2963,6 +2992,9 @@ int rt5682_parse_dt(struct rt5682_priv *rt5682, struct device *dev)
 			 rt5682->pdata.dai_clk_names[RT5682_DAI_WCLK_IDX],
 			 rt5682->pdata.dai_clk_names[RT5682_DAI_BCLK_IDX]);
 
+	rt5682->pdata.dmic_clk_driving_high = device_property_read_bool(dev,
+		"realtek,dmic-clk-driving-high");
+
 	device_property_read_string(dev, "realtek,mclk-name", &rt5682->pdata.mclk_name);
 
 	return 0;
@@ -3009,13 +3041,14 @@ void rt5682_calibrate(struct rt5682_priv *rt5682)
 		dev_err(rt5682->component->dev, "HP Calibration Failure\n");
 
 	/* restore settings */
-	regmap_write(rt5682->regmap, RT5682_PWR_ANLG_1, 0x02af);
+	regmap_write(rt5682->regmap, RT5682_PWR_ANLG_1, 0x002f);
 	regmap_write(rt5682->regmap, RT5682_MICBIAS_2, 0x0080);
 	regmap_write(rt5682->regmap, RT5682_GLB_CLK, 0x0000);
 	regmap_write(rt5682->regmap, RT5682_PWR_DIG_1, 0x0000);
 	regmap_write(rt5682->regmap, RT5682_CHOP_DAC, 0x2000);
 	regmap_write(rt5682->regmap, RT5682_CALIB_ADC_CTRL, 0x2005);
 	regmap_write(rt5682->regmap, RT5682_STO1_ADC_MIXER, 0xc0c4);
+	regmap_write(rt5682->regmap, RT5682_CAL_REC, 0x0c0c);
 
 	mutex_unlock(&rt5682->calibrate_mutex);
 }

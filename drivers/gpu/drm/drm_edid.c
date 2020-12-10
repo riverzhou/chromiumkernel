@@ -1292,25 +1292,25 @@ static const struct drm_display_mode edid_4k_modes[] = {
 		   3840, 4016, 4104, 4400, 0,
 		   2160, 2168, 2178, 2250, 0,
 		   DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC),
-	  .vrefresh = 30, },
+	  .vrefresh = 30, .picture_aspect_ratio = HDMI_PICTURE_ASPECT_16_9, },
 	/* 2 - 3840x2160@25Hz */
 	{ DRM_MODE("3840x2160", DRM_MODE_TYPE_DRIVER, 297000,
 		   3840, 4896, 4984, 5280, 0,
 		   2160, 2168, 2178, 2250, 0,
 		   DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC),
-	  .vrefresh = 25, },
+	  .vrefresh = 25, .picture_aspect_ratio = HDMI_PICTURE_ASPECT_16_9, },
 	/* 3 - 3840x2160@24Hz */
 	{ DRM_MODE("3840x2160", DRM_MODE_TYPE_DRIVER, 297000,
 		   3840, 5116, 5204, 5500, 0,
 		   2160, 2168, 2178, 2250, 0,
 		   DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC),
-	  .vrefresh = 24, },
+	  .vrefresh = 24, .picture_aspect_ratio = HDMI_PICTURE_ASPECT_16_9, },
 	/* 4 - 4096x2160@24Hz (SMPTE) */
 	{ DRM_MODE("4096x2160", DRM_MODE_TYPE_DRIVER, 297000,
 		   4096, 5116, 5204, 5500, 0,
 		   2160, 2168, 2178, 2250, 0,
 		   DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC),
-	  .vrefresh = 24, },
+	  .vrefresh = 24, .picture_aspect_ratio = HDMI_PICTURE_ASPECT_256_135, },
 };
 
 /*** DDC fetch and block validation ***/
@@ -3124,18 +3124,15 @@ static bool drm_valid_cea_vic(u8 vic)
 	return vic > 0 && vic < ARRAY_SIZE(edid_cea_modes);
 }
 
-/**
- * drm_get_cea_aspect_ratio - get the picture aspect ratio corresponding to
- * the input VIC from the CEA mode list
- * @video_code: ID given to each of the CEA modes
- *
- * Returns picture aspect ratio
- */
-enum hdmi_picture_aspect drm_get_cea_aspect_ratio(const u8 video_code)
+static enum hdmi_picture_aspect drm_get_cea_aspect_ratio(const u8 video_code)
 {
 	return edid_cea_modes[video_code].picture_aspect_ratio;
 }
-EXPORT_SYMBOL(drm_get_cea_aspect_ratio);
+
+static enum hdmi_picture_aspect drm_get_hdmi_aspect_ratio(const u8 video_code)
+{
+	return edid_4k_modes[video_code].picture_aspect_ratio;
+}
 
 /*
  * Calculate the alternate clock for HDMI modes (those from the HDMI vendor
@@ -3162,6 +3159,9 @@ static u8 drm_match_hdmi_mode_clock_tolerance(const struct drm_display_mode *to_
 
 	if (!to_match->clock)
 		return 0;
+
+	if (to_match->picture_aspect_ratio)
+		match_flags |= DRM_MODE_MATCH_ASPECT_RATIO;
 
 	for (vic = 1; vic < ARRAY_SIZE(edid_4k_modes); vic++) {
 		const struct drm_display_mode *hdmi_mode = &edid_4k_modes[vic];
@@ -3197,6 +3197,9 @@ static u8 drm_match_hdmi_mode(const struct drm_display_mode *to_match)
 
 	if (!to_match->clock)
 		return 0;
+
+	if (to_match->picture_aspect_ratio)
+		match_flags |= DRM_MODE_MATCH_ASPECT_RATIO;
 
 	for (vic = 1; vic < ARRAY_SIZE(edid_4k_modes); vic++) {
 		const struct drm_display_mode *hdmi_mode = &edid_4k_modes[vic];
@@ -5087,6 +5090,49 @@ drm_hdmi_infoframe_set_hdr_metadata(struct hdmi_drm_infoframe *frame,
 }
 EXPORT_SYMBOL(drm_hdmi_infoframe_set_hdr_metadata);
 
+static u8 drm_mode_hdmi_vic(struct drm_connector *connector,
+			    const struct drm_display_mode *mode)
+{
+	bool has_hdmi_infoframe = connector ?
+		connector->display_info.has_hdmi_infoframe : false;
+
+	if (!has_hdmi_infoframe)
+		return 0;
+
+	/* No HDMI VIC when signalling 3D video format */
+	if (mode->flags & DRM_MODE_FLAG_3D_MASK)
+		return 0;
+
+	return drm_match_hdmi_mode(mode);
+}
+
+static u8 drm_mode_cea_vic(struct drm_connector *connector,
+			   const struct drm_display_mode *mode)
+{
+	u8 vic;
+
+	/*
+	 * HDMI spec says if a mode is found in HDMI 1.4b 4K modes
+	 * we should send its VIC in vendor infoframes, else send the
+	 * VIC in AVI infoframes. Lets check if this mode is present in
+	 * HDMI 1.4b 4K modes
+	 */
+	if (drm_mode_hdmi_vic(connector, mode))
+		return 0;
+
+	vic = drm_match_cea_mode(mode);
+
+	/*
+	 * HDMI 1.4 VIC range: 1 <= VIC <= 64 (CEA-861-D) but
+	 * HDMI 2.0 VIC range: 1 <= VIC <= 107 (CEA-861-F). So we
+	 * have to make sure we dont break HDMI 1.4 sinks.
+	 */
+	if (!is_hdmi2_sink(connector) && vic > 64)
+		return 0;
+
+	return vic;
+}
+
 /**
  * drm_hdmi_avi_infoframe_from_display_mode() - fill an HDMI AVI infoframe with
  *                                              data from a DRM display mode
@@ -5102,6 +5148,7 @@ drm_hdmi_avi_infoframe_from_display_mode(struct hdmi_avi_infoframe *frame,
 					 const struct drm_display_mode *mode)
 {
 	enum hdmi_picture_aspect picture_aspect;
+	u8 vic, hdmi_vic;
 	int err;
 
 	if (!frame || !mode)
@@ -5114,29 +5161,8 @@ drm_hdmi_avi_infoframe_from_display_mode(struct hdmi_avi_infoframe *frame,
 	if (mode->flags & DRM_MODE_FLAG_DBLCLK)
 		frame->pixel_repeat = 1;
 
-	frame->video_code = drm_match_cea_mode(mode);
-
-	/*
-	 * HDMI 1.4 VIC range: 1 <= VIC <= 64 (CEA-861-D) but
-	 * HDMI 2.0 VIC range: 1 <= VIC <= 107 (CEA-861-F). So we
-	 * have to make sure we dont break HDMI 1.4 sinks.
-	 */
-	if (!is_hdmi2_sink(connector) && frame->video_code > 64)
-		frame->video_code = 0;
-
-	/*
-	 * HDMI spec says if a mode is found in HDMI 1.4b 4K modes
-	 * we should send its VIC in vendor infoframes, else send the
-	 * VIC in AVI infoframes. Lets check if this mode is present in
-	 * HDMI 1.4b 4K modes
-	 */
-	if (frame->video_code) {
-		u8 vendor_if_vic = drm_match_hdmi_mode(mode);
-		bool is_s3d = mode->flags & DRM_MODE_FLAG_3D_MASK;
-
-		if (drm_valid_hdmi_vic(vendor_if_vic) && !is_s3d)
-			frame->video_code = 0;
-	}
+	vic = drm_mode_cea_vic(connector, mode);
+	hdmi_vic = drm_mode_hdmi_vic(connector, mode);
 
 	frame->picture_aspect = HDMI_PICTURE_ASPECT_NONE;
 
@@ -5150,11 +5176,15 @@ drm_hdmi_avi_infoframe_from_display_mode(struct hdmi_avi_infoframe *frame,
 
 	/*
 	 * Populate picture aspect ratio from either
-	 * user input (if specified) or from the CEA mode list.
+	 * user input (if specified) or from the CEA/HDMI mode lists.
 	 */
 	picture_aspect = mode->picture_aspect_ratio;
-	if (picture_aspect == HDMI_PICTURE_ASPECT_NONE)
-		picture_aspect = drm_get_cea_aspect_ratio(frame->video_code);
+	if (picture_aspect == HDMI_PICTURE_ASPECT_NONE) {
+		if (vic)
+			picture_aspect = drm_get_cea_aspect_ratio(vic);
+		else if (hdmi_vic)
+			picture_aspect = drm_get_hdmi_aspect_ratio(hdmi_vic);
+	}
 
 	/*
 	 * The infoframe can't convey anything but none, 4:3
@@ -5162,12 +5192,20 @@ drm_hdmi_avi_infoframe_from_display_mode(struct hdmi_avi_infoframe *frame,
 	 * we can only satisfy it by specifying the right VIC.
 	 */
 	if (picture_aspect > HDMI_PICTURE_ASPECT_16_9) {
-		if (picture_aspect !=
-		    drm_get_cea_aspect_ratio(frame->video_code))
+		if (vic) {
+			if (picture_aspect != drm_get_cea_aspect_ratio(vic))
+				return -EINVAL;
+		} else if (hdmi_vic) {
+			if (picture_aspect != drm_get_hdmi_aspect_ratio(hdmi_vic))
+				return -EINVAL;
+		} else {
 			return -EINVAL;
+		}
+
 		picture_aspect = HDMI_PICTURE_ASPECT_NONE;
 	}
 
+	frame->video_code = vic;
 	frame->picture_aspect = picture_aspect;
 	frame->active_aspect = HDMI_ACTIVE_ASPECT_PICTURE;
 	frame->scan_mode = HDMI_SCAN_MODE_UNDERSCAN;
@@ -5353,8 +5391,6 @@ drm_hdmi_vendor_infoframe_from_display_mode(struct hdmi_vendor_infoframe *frame,
 	bool has_hdmi_infoframe = connector ?
 		connector->display_info.has_hdmi_infoframe : false;
 	int err;
-	u32 s3d_flags;
-	u8 vic;
 
 	if (!frame || !mode)
 		return -EINVAL;
@@ -5362,8 +5398,9 @@ drm_hdmi_vendor_infoframe_from_display_mode(struct hdmi_vendor_infoframe *frame,
 	if (!has_hdmi_infoframe)
 		return -EINVAL;
 
-	vic = drm_match_hdmi_mode(mode);
-	s3d_flags = mode->flags & DRM_MODE_FLAG_3D_MASK;
+	err = hdmi_vendor_infoframe_init(frame);
+	if (err < 0)
+		return err;
 
 	/*
 	 * Even if it's not absolutely necessary to send the infoframe
@@ -5374,15 +5411,7 @@ drm_hdmi_vendor_infoframe_from_display_mode(struct hdmi_vendor_infoframe *frame,
 	 * mode if the source simply stops sending the infoframe when
 	 * it wants to switch from 3D to 2D.
 	 */
-
-	if (vic && s3d_flags)
-		return -EINVAL;
-
-	err = hdmi_vendor_infoframe_init(frame);
-	if (err < 0)
-		return err;
-
-	frame->vic = vic;
+	frame->vic = drm_mode_hdmi_vic(connector, mode);
 	frame->s3d_struct = s3d_structure_from_display_mode(mode);
 
 	return 0;
