@@ -316,13 +316,20 @@ neverware_sof_allowed_models[] = {
 			DMI_MATCH(DMI_PRODUCT_FAMILY, "ThinkPad T14 Gen 1"),
 		}
 	},
-
 	/* [OVER-10876] */
 	{
-		.ident = "Lenovo ThinkPad X1",
+		.ident = "Lenovo ThinkPad X1 7",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
 			DMI_MATCH(DMI_PRODUCT_FAMILY, "ThinkPad X1 Carbon 7th"),
+		}
+	},
+	/* [OVER-13396] */
+	{
+		.ident = "Lenovo ThinkPad X1 8",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
+			DMI_MATCH(DMI_PRODUCT_FAMILY, "ThinkPad X1 Carbon Gen 8"),
 		}
 	},
 	/* [OVER-12651] */
