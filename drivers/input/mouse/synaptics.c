@@ -73,6 +73,8 @@
  *	Stuff we need even when we do not want native Synaptics support
  ****************************************************************************/
 
+static bool broken_synaptics_rmi4;
+
 /*
  * Set the synaptics touchpad mode byte by special commands
  */
@@ -1542,7 +1544,6 @@ static const struct dmi_system_id __initconst cr48_dmi_table[] = {
 	{ }
 };
 
-static bool broken_synaptics_rmi4;
 
 /* Lenovo machines do not work with rmi4, skip them for now.
  * OVER-5953, OVER-5835, OVER-5797
