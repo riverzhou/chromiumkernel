@@ -105,7 +105,7 @@ static int intel_dp_mst_compute_config(struct intel_encoder *encoder,
 		to_intel_digital_connector_state(conn_state);
 	const struct drm_display_mode *adjusted_mode =
 		&pipe_config->hw.adjusted_mode;
-	void *port = connector->port;
+	//void *port = connector->port;
 	struct link_config_limits limits;
 	int ret;
 
