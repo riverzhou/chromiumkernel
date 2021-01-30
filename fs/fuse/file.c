@@ -19,6 +19,7 @@
 #include <linux/falloc.h>
 #include <linux/uio.h>
 #include <linux/fs.h>
+#include <linux/fscrypt.h>
 
 static struct page **fuse_pages_alloc(unsigned int npages, gfp_t flags,
 				      struct fuse_page_desc **desc)
@@ -39,7 +40,8 @@ static int fuse_send_open(struct fuse_conn *fc, u64 nodeid, struct file *file,
 	FUSE_ARGS(args);
 
 	memset(&inarg, 0, sizeof(inarg));
-	inarg.flags = file->f_flags & ~(O_CREAT | O_EXCL | O_NOCTTY);
+	inarg.flags =
+		file->f_flags & ~(O_CREAT | O_EXCL | O_NOCTTY | O_TMPFILE);
 	if (!fc->atomic_o_trunc)
 		inarg.flags &= ~O_TRUNC;
 	args.opcode = opcode;
@@ -223,6 +225,9 @@ int fuse_open_common(struct inode *inode, struct file *file, bool isdir)
 			  fc->writeback_cache;
 	bool dax_truncate = (file->f_flags & O_TRUNC) &&
 			  fc->atomic_o_trunc && FUSE_IS_DAX(inode);
+
+	if (fuse_is_bad(inode))
+		return -EIO;
 
 	err = generic_file_open(inode, file);
 	if (err)
@@ -455,7 +460,7 @@ static int fuse_flush(struct file *file, fl_owner_t id)
 	FUSE_ARGS(args);
 	int err;
 
-	if (is_bad_inode(inode))
+	if (fuse_is_bad(inode))
 		return -EIO;
 
 	if (fc->no_flush)
@@ -518,7 +523,7 @@ static int fuse_fsync(struct file *file, loff_t start, loff_t end,
 	struct fuse_conn *fc = get_fuse_conn(inode);
 	int err;
 
-	if (is_bad_inode(inode))
+	if (fuse_is_bad(inode))
 		return -EIO;
 
 	inode_lock(inode);
@@ -842,7 +847,7 @@ static int fuse_readpage(struct file *file, struct page *page)
 	int err;
 
 	err = -EIO;
-	if (is_bad_inode(inode))
+	if (fuse_is_bad(inode))
 		goto out;
 
 	err = fuse_do_readpage(file, page);
@@ -985,7 +990,7 @@ static int fuse_readpages(struct file *file, struct address_space *mapping,
 	int err;
 
 	err = -EIO;
-	if (is_bad_inode(inode))
+	if (fuse_is_bad(inode))
 		goto out;
 
 	data.file = file;
@@ -1587,7 +1592,7 @@ static ssize_t fuse_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	struct fuse_file *ff = file->private_data;
 	struct inode *inode = file_inode(file);
 
-	if (is_bad_inode(inode))
+	if (fuse_is_bad(inode))
 		return -EIO;
 
 	if (FUSE_IS_DAX(inode))
@@ -1605,7 +1610,7 @@ static ssize_t fuse_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	struct fuse_file *ff = file->private_data;
 	struct inode *inode = file_inode(file);
 
-	if (is_bad_inode(inode))
+	if (fuse_is_bad(inode))
 		return -EIO;
 
 	if (FUSE_IS_DAX(inode))
@@ -2158,7 +2163,7 @@ static int fuse_writepages(struct address_space *mapping,
 	int err;
 
 	err = -EIO;
-	if (is_bad_inode(inode))
+	if (fuse_is_bad(inode))
 		goto out;
 
 	data.inode = inode;
@@ -2689,6 +2694,35 @@ static int fuse_copy_ioctl_iovec(struct fuse_conn *fc, struct iovec *dst,
 	return 0;
 }
 
+static int fuse_get_ioctl_len(unsigned int cmd, unsigned long arg, size_t *len)
+{
+	switch (cmd) {
+	case FS_IOC_GETFLAGS:
+	case FS_IOC_SETFLAGS:
+		*len = sizeof(int);
+		break;
+	case FS_IOC_GET_ENCRYPTION_POLICY_EX: {
+		__u64 policy_size;
+		struct fscrypt_get_policy_ex_arg __user *uarg =
+			(struct fscrypt_get_policy_ex_arg __user *)arg;
+
+		if (copy_from_user(&policy_size, &uarg->policy_size,
+				   sizeof(policy_size)))
+			return -EFAULT;
+
+		if (policy_size > SIZE_MAX - sizeof(policy_size))
+			return -EINVAL;
+
+		*len = sizeof(policy_size) + policy_size;
+		break;
+	}
+	default:
+		*len = _IOC_SIZE(cmd);
+		break;
+	}
+
+	return 0;
+}
 
 /*
  * For ioctls, there is no generic way to determine how much memory
@@ -2788,16 +2822,9 @@ long fuse_do_ioctl(struct file *file, unsigned int cmd, unsigned long arg,
 		struct iovec *iov = iov_page;
 
 		iov->iov_base = (void __user *)arg;
-
-		switch (cmd) {
-		case FS_IOC_GETFLAGS:
-		case FS_IOC_SETFLAGS:
-			iov->iov_len = sizeof(int);
-			break;
-		default:
-			iov->iov_len = _IOC_SIZE(cmd);
-			break;
-		}
+		err = fuse_get_ioctl_len(cmd, arg, &iov->iov_len);
+		if (err)
+			goto out;
 
 		if (_IOC_DIR(cmd) & _IOC_WRITE) {
 			in_iov = iov;
@@ -2940,7 +2967,7 @@ long fuse_ioctl_common(struct file *file, unsigned int cmd,
 	if (!fuse_allow_current_process(fc))
 		return -EACCES;
 
-	if (is_bad_inode(inode))
+	if (fuse_is_bad(inode))
 		return -EIO;
 
 	return fuse_do_ioctl(file, cmd, arg, flags);

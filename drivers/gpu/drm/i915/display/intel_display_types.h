@@ -39,7 +39,6 @@
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_rect.h>
 #include <drm/drm_vblank.h>
-#include <drm/i915_drm.h>
 #include <drm/i915_mei_hdcp_interface.h>
 #include <media/cec-notifier.h>
 
@@ -318,6 +317,10 @@ struct intel_hdcp_shim {
 				 enum transcoder cpu_transcoder,
 				 bool enable);
 
+	/* Enable/Disable stream encryption on DP MST Transport Link */
+	int (*stream_encryption)(struct intel_connector *connector,
+				 bool enable);
+
 	/* Ensures the link is still protected */
 	bool (*check_link)(struct intel_digital_port *dig_port,
 			   struct intel_connector *connector);
@@ -349,8 +352,13 @@ struct intel_hdcp_shim {
 	int (*config_stream_type)(struct intel_digital_port *dig_port,
 				  bool is_repeater, u8 type);
 
+	/* Enable/Disable HDCP 2.2 stream encryption on DP MST Transport Link */
+	int (*stream_2_2_encryption)(struct intel_connector *connector,
+				     bool enable);
+
 	/* HDCP2.2 Link Integrity Check */
-	int (*check_2_2_link)(struct intel_digital_port *dig_port);
+	int (*check_2_2_link)(struct intel_digital_port *dig_port,
+			      struct intel_connector *connector);
 };
 
 struct intel_hdcp {
@@ -377,7 +385,6 @@ struct intel_hdcp {
 	 * content can flow only through a link protected by HDCP2.2.
 	 */
 	u8 content_type;
-	struct hdcp_port_data port_data;
 
 	bool is_paired;
 	bool is_repeater;
@@ -411,6 +418,8 @@ struct intel_hdcp {
 	 * Hence caching the transcoder here.
 	 */
 	enum transcoder cpu_transcoder;
+	/* Only used for DP MST stream encryption */
+	enum transcoder stream_transcoder;
 };
 
 struct intel_connector {
@@ -441,7 +450,7 @@ struct intel_connector {
 	   state of connector->polled in case hotplug storm detection changes it */
 	u8 polled;
 
-	void *port; /* store this opaque as its illegal to dereference it */
+	struct drm_dp_mst_port *port;
 
 	struct intel_dp *mst_port;
 
@@ -482,16 +491,6 @@ struct intel_atomic_state {
 
 	bool dpll_set, modeset;
 
-	/*
-	 * Does this transaction change the pipes that are active?  This mask
-	 * tracks which CRTC's have changed their active state at the end of
-	 * the transaction (not counting the temporary disable during modesets).
-	 * This mask should only be non-zero when intel_state->modeset is true,
-	 * but the converse is not necessarily true; simply changing a mode may
-	 * not flip the final active status of any CRTC's
-	 */
-	u8 active_pipe_changes;
-
 	u8 active_pipes;
 
 	struct intel_shared_dpll_state shared_dpll[I915_NUM_PLLS];
@@ -508,9 +507,6 @@ struct intel_atomic_state {
 	 * active_pipes
 	 */
 	bool global_state_changed;
-
-	/* Number of enabled DBuf slices */
-	u8 enabled_dbuf_slices_mask;
 
 	struct i915_sw_fence commit_ready;
 
@@ -606,6 +602,7 @@ struct intel_plane_state {
 
 struct intel_initial_plane_config {
 	struct intel_framebuffer *fb;
+	struct i915_vma *vma;
 	unsigned int tiling;
 	int size;
 	u32 base;
@@ -920,6 +917,7 @@ struct intel_crtc_state {
 
 	bool has_psr;
 	bool has_psr2;
+	bool enable_psr2_sel_fetch;
 	u32 dc3co_exitline;
 
 	/*
@@ -1057,6 +1055,37 @@ struct intel_crtc_state {
 
 	/* Only valid on TGL+ */
 	enum transcoder mst_master_transcoder;
+
+	/* For DSB related info */
+	struct intel_dsb *dsb;
+
+	u32 psr2_man_track_ctl;
+};
+
+enum intel_pipe_crc_source {
+	INTEL_PIPE_CRC_SOURCE_NONE,
+	INTEL_PIPE_CRC_SOURCE_PLANE1,
+	INTEL_PIPE_CRC_SOURCE_PLANE2,
+	INTEL_PIPE_CRC_SOURCE_PLANE3,
+	INTEL_PIPE_CRC_SOURCE_PLANE4,
+	INTEL_PIPE_CRC_SOURCE_PLANE5,
+	INTEL_PIPE_CRC_SOURCE_PLANE6,
+	INTEL_PIPE_CRC_SOURCE_PLANE7,
+	INTEL_PIPE_CRC_SOURCE_PIPE,
+	/* TV/DP on pre-gen5/vlv can't use the pipe source. */
+	INTEL_PIPE_CRC_SOURCE_TV,
+	INTEL_PIPE_CRC_SOURCE_DP_B,
+	INTEL_PIPE_CRC_SOURCE_DP_C,
+	INTEL_PIPE_CRC_SOURCE_DP_D,
+	INTEL_PIPE_CRC_SOURCE_AUTO,
+	INTEL_PIPE_CRC_SOURCE_MAX,
+};
+
+#define INTEL_PIPE_CRC_ENTRIES_NR	128
+struct intel_pipe_crc {
+	spinlock_t lock;
+	int skipped;
+	enum intel_pipe_crc_source source;
 };
 
 struct intel_crtc {
@@ -1100,8 +1129,9 @@ struct intel_crtc {
 	/* scalers available on this crtc */
 	int num_scalers;
 
-	/* per pipe DSB related info */
-	struct intel_dsb dsb;
+#ifdef CONFIG_DEBUG_FS
+	struct intel_pipe_crc pipe_crc;
+#endif
 };
 
 struct intel_plane {
@@ -1136,6 +1166,9 @@ struct intel_plane {
 			   struct intel_plane_state *plane_state);
 	int (*min_cdclk)(const struct intel_crtc_state *crtc_state,
 			 const struct intel_plane_state *plane_state);
+	void (*async_flip)(struct intel_plane *plane,
+			   const struct intel_crtc_state *crtc_state,
+			   const struct intel_plane_state *plane_state);
 };
 
 struct intel_watermark_params {
@@ -1223,8 +1256,8 @@ struct intel_dp {
 	int link_rate;
 	u8 lane_count;
 	u8 sink_count;
-	bool link_mst;
 	bool link_trained;
+	bool has_hdmi_sink;
 	bool has_audio;
 	bool reset_link_params;
 	u8 dpcd[DP_RECEIVER_CAP_SIZE];
@@ -1288,14 +1321,6 @@ struct intel_dp {
 	bool is_mst;
 	int active_mst_links;
 
-	/*
-	 * DP_TP_* registers may be either on port or transcoder register space.
-	 */
-	struct {
-		i915_reg_t dp_tp_ctl;
-		i915_reg_t dp_tp_status;
-	} regs;
-
 	/* connector directly attached - won't be use for modeset in mst world */
 	struct intel_connector *attached_connector;
 
@@ -1315,19 +1340,36 @@ struct intel_dp {
 	i915_reg_t (*aux_ch_data_reg)(struct intel_dp *dp, int index);
 
 	/* This is called before a link training is starterd */
-	void (*prepare_link_retrain)(struct intel_dp *intel_dp);
-	void (*set_link_train)(struct intel_dp *intel_dp, u8 dp_train_pat);
-	void (*set_idle_link_train)(struct intel_dp *intel_dp);
-	void (*set_signal_levels)(struct intel_dp *intel_dp);
+	void (*prepare_link_retrain)(struct intel_dp *intel_dp,
+				     const struct intel_crtc_state *crtc_state);
+	void (*set_link_train)(struct intel_dp *intel_dp,
+			       const struct intel_crtc_state *crtc_state,
+			       u8 dp_train_pat);
+	void (*set_idle_link_train)(struct intel_dp *intel_dp,
+				    const struct intel_crtc_state *crtc_state);
+	void (*set_signal_levels)(struct intel_dp *intel_dp,
+				  const struct intel_crtc_state *crtc_state);
 
 	u8 (*preemph_max)(struct intel_dp *intel_dp);
-	u8 (*voltage_max)(struct intel_dp *intel_dp);
+	u8 (*voltage_max)(struct intel_dp *intel_dp,
+			  const struct intel_crtc_state *crtc_state);
 
 	/* Displayport compliance testing */
 	struct intel_dp_compliance compliance;
 
+	/* Downstream facing port caps */
+	struct {
+		int min_tmds_clock, max_tmds_clock;
+		int max_dotclock;
+		u8 max_bpc;
+		bool ycbcr_444_to_420;
+	} dfp;
+
 	/* Display stream compression testing */
 	bool force_dsc_en;
+
+	bool hobl_failed;
+	bool hobl_active;
 };
 
 enum lspcon_vendor {
@@ -1362,10 +1404,14 @@ struct intel_digital_port {
 	enum phy_fia tc_phy_fia;
 	u8 tc_phy_fia_idx;
 
-	/* protects num_hdcp_streams reference count */
+	/* protects num_hdcp_streams reference count, hdcp_port_data and hdcp_auth_status */
 	struct mutex hdcp_mutex;
 	/* the number of pipes using HDCP signalling out of this port */
 	unsigned int num_hdcp_streams;
+	/* port HDCP auth status */
+	bool hdcp_auth_status;
+	/* HDCP port data need to pass to security f/w */
+	struct hdcp_port_data hdcp_port_data;
 
 	void (*write_infoframe)(struct intel_encoder *encoder,
 				const struct intel_crtc_state *crtc_state,

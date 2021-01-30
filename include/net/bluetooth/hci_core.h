@@ -799,6 +799,47 @@ static inline long inquiry_entry_age(struct inquiry_entry *e)
 	return jiffies - e->timestamp;
 }
 
+static inline bool keychron_conn_is_present(struct hci_dev *hdev)
+{
+	struct hci_conn_hash *h = &hdev->conn_hash;
+	struct hci_conn *c;
+
+	/* The keychron device is identified using the OUI portion of
+	 * the address
+	 */
+	static __u8 keychron[3] = {0x26, 0x2c, 0xdc};
+
+	rcu_read_lock();
+
+	list_for_each_entry_rcu(c, &h->list, list) {
+		u8 *t;
+
+		if (c->type != ACL_LINK)
+			continue;
+
+		t = (u8 *)(&c->dst);
+		if (!memcmp(t + 3, keychron, 3)) {
+			rcu_read_unlock();
+			return true;
+		}
+	}
+
+	rcu_read_unlock();
+
+	return false;
+}
+
+static inline bool restrict_le_conn_params(struct hci_dev *hdev)
+{
+	if (!test_bit(HCI_QUIRK_INTEL_STP_CONTROLLER, &hdev->quirks))
+		return false;
+
+	if (!keychron_conn_is_present(hdev))
+		return false;
+
+	return true;
+}
+
 struct inquiry_entry *hci_inquiry_cache_lookup(struct hci_dev *hdev,
 					       bdaddr_t *bdaddr);
 struct inquiry_entry *hci_inquiry_cache_lookup_unknown(struct hci_dev *hdev,
@@ -1711,8 +1752,6 @@ void hci_mgmt_chan_unregister(struct hci_mgmt_chan *c);
 #define DISCOV_INTERLEAVED_INQUIRY_LEN	0x04
 #define DISCOV_BREDR_INQUIRY_LEN	0x08
 #define DISCOV_LE_RESTART_DELAY		msecs_to_jiffies(200)	/* msec */
-#define DISCOV_LE_FAST_ADV_INT_MIN     100     /* msec */
-#define DISCOV_LE_FAST_ADV_INT_MAX     150     /* msec */
 
 void mgmt_fill_version_info(void *ver);
 int mgmt_new_settings(struct hci_dev *hdev);

@@ -1450,17 +1450,12 @@ static int ath10k_core_create_board_name(struct ath10k *ar, char *name,
 	}
 
 	if (ar->id.qmi_ids_valid) {
-		if (with_variant && ar->id.bdf_ext[0] != '\0' && with_chip_id)
+		if (with_chip_id)
 			scnprintf(name, name_len,
 				  "bus=%s,qmi-board-id=%x,qmi-chip-id=%x%s",
 				  ath10k_bus_str(ar->hif.bus),
 				  ar->id.qmi_board_id, ar->id.qmi_chip_id,
 				  variant);
-		else if (with_chip_id)
-			scnprintf(name, name_len,
-				  "bus=%s,qmi-board-id=%x,qmi-chip-id=%x",
-				  ath10k_bus_str(ar->hif.bus),
-				  ar->id.qmi_board_id, ar->id.qmi_chip_id);
 		else
 			scnprintf(name, name_len,
 				  "bus=%s,qmi-board-id=%x",
@@ -1505,7 +1500,8 @@ int ath10k_core_fetch_board_file(struct ath10k *ar, int bd_ie_type)
 	if (bd_ie_type == ATH10K_BD_IE_BOARD) {
 		/* With variant and chip id */
 		ret = ath10k_core_create_board_name(ar, boardname,
-						sizeof(boardname), true, true);
+						    sizeof(boardname), true,
+						    true);
 		if (ret) {
 			ath10k_err(ar, "failed to create board name: %d", ret);
 			return ret;
@@ -1516,7 +1512,8 @@ int ath10k_core_fetch_board_file(struct ath10k *ar, int bd_ie_type)
 						    sizeof(boardname), false,
 						    true);
 		if (ret) {
-			ath10k_err(ar, "failed to create 1st fallback board name: %d", ret);
+			ath10k_err(ar, "failed to create 1st fallback board name: %d",
+				   ret);
 			return ret;
 		}
 
@@ -1525,7 +1522,8 @@ int ath10k_core_fetch_board_file(struct ath10k *ar, int bd_ie_type)
 						    sizeof(boardname), false,
 						    false);
 		if (ret) {
-			ath10k_err(ar, "failed to create 2nd fallback board name: %d", ret);
+			ath10k_err(ar, "failed to create 2nd fallback board name: %d",
+				   ret);
 			return ret;
 		}
 	} else if (bd_ie_type == ATH10K_BD_IE_BOARD_EXT) {

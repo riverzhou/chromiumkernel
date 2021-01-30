@@ -1034,6 +1034,8 @@ static bool drm_dp_sideband_parse_reply(struct drm_dp_sideband_msg_rx *raw,
 		return drm_dp_sideband_parse_remote_dpcd_write(raw, msg);
 	case DP_REMOTE_I2C_READ:
 		return drm_dp_sideband_parse_remote_i2c_read_ack(raw, msg);
+	case DP_REMOTE_I2C_WRITE:
+		return true; /* since there's nothing to parse */
 	case DP_ENUM_PATH_RESOURCES:
 		return drm_dp_sideband_parse_enum_path_resources_ack(raw, msg);
 	case DP_ALLOCATE_PAYLOAD:
@@ -2343,6 +2345,9 @@ drm_dp_mst_add_port(struct drm_device *dev,
 	port->aux.dev = dev->dev;
 	port->aux.is_remote = true;
 
+	/* initialize the MST downstream port's AUX crc work queue */
+	drm_dp_remote_aux_init(&port->aux);
+
 	/*
 	 * Make sure the memory allocation for our parent branch stays
 	 * around until our own memory allocation is released
@@ -3638,6 +3643,28 @@ static int drm_dp_get_vc_payload_bw(u8 dp_link_bw, u8  dp_link_count)
 }
 
 /**
+ * drm_dp_read_mst_cap() - check whether or not a sink supports MST
+ * @aux: The DP AUX channel to use
+ * @dpcd: A cached copy of the DPCD capabilities for this sink
+ *
+ * Returns: %True if the sink supports MST, %false otherwise
+ */
+bool drm_dp_read_mst_cap(struct drm_dp_aux *aux,
+			 const u8 dpcd[DP_RECEIVER_CAP_SIZE])
+{
+	u8 mstm_cap;
+
+	if (dpcd[DP_DPCD_REV] < DP_DPCD_REV_12)
+		return false;
+
+	if (drm_dp_dpcd_readb(aux, DP_MSTM_CAP, &mstm_cap) != 1)
+		return false;
+
+	return mstm_cap & DP_MST_CAP;
+}
+EXPORT_SYMBOL(drm_dp_read_mst_cap);
+
+/**
  * drm_dp_mst_topology_mgr_set_mst() - Set the MST state for a topology manager
  * @mgr: manager to set state for
  * @mst_state: true to enable MST on this connector - false to disable.
@@ -4189,27 +4216,6 @@ out:
 	return ret;
 }
 EXPORT_SYMBOL(drm_dp_mst_detect_port);
-
-/**
- * drm_dp_mst_port_has_audio() - Check whether port has audio capability or not
- * @mgr: manager for this port
- * @port: unverified pointer to a port.
- *
- * This returns whether the port supports audio or not.
- */
-bool drm_dp_mst_port_has_audio(struct drm_dp_mst_topology_mgr *mgr,
-					struct drm_dp_mst_port *port)
-{
-	bool ret = false;
-
-	port = drm_dp_mst_topology_get_port_validated(mgr, port);
-	if (!port)
-		return ret;
-	ret = port->has_audio;
-	drm_dp_mst_topology_put_port(port);
-	return ret;
-}
-EXPORT_SYMBOL(drm_dp_mst_port_has_audio);
 
 /**
  * drm_dp_mst_get_edid() - get EDID for an MST port
@@ -5212,28 +5218,28 @@ static bool remote_i2c_read_ok(const struct i2c_msg msgs[], int num)
 		msgs[num - 1].len <= 0xff;
 }
 
-/* I2C device */
-static int drm_dp_mst_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs,
-			       int num)
+static bool remote_i2c_write_ok(const struct i2c_msg msgs[], int num)
 {
-	struct drm_dp_aux *aux = adapter->algo_data;
-	struct drm_dp_mst_port *port = container_of(aux, struct drm_dp_mst_port, aux);
-	struct drm_dp_mst_branch *mstb;
+	int i;
+
+	for (i = 0; i < num - 1; i++) {
+		if (msgs[i].flags & I2C_M_RD || !(msgs[i].flags & I2C_M_STOP) ||
+		    msgs[i].len > 0xff)
+			return false;
+	}
+
+	return !(msgs[num - 1].flags & I2C_M_RD) && msgs[num - 1].len <= 0xff;
+}
+
+static int drm_dp_mst_i2c_read(struct drm_dp_mst_branch *mstb,
+			       struct drm_dp_mst_port *port,
+			       struct i2c_msg *msgs, int num)
+{
 	struct drm_dp_mst_topology_mgr *mgr = port->mgr;
 	unsigned int i;
 	struct drm_dp_sideband_msg_req_body msg;
 	struct drm_dp_sideband_msg_tx *txmsg = NULL;
 	int ret;
-
-	mstb = drm_dp_mst_topology_get_mstb_validated(mgr, port->parent);
-	if (!mstb)
-		return -EREMOTEIO;
-
-	if (!remote_i2c_read_ok(msgs, num)) {
-		DRM_DEBUG_KMS("Unsupported I2C transaction for MST device\n");
-		ret = -EIO;
-		goto out;
-	}
 
 	memset(&msg, 0, sizeof(msg));
 	msg.req_type = DP_REMOTE_I2C_READ;
@@ -5275,6 +5281,78 @@ static int drm_dp_mst_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs
 	}
 out:
 	kfree(txmsg);
+	return ret;
+}
+
+static int drm_dp_mst_i2c_write(struct drm_dp_mst_branch *mstb,
+				struct drm_dp_mst_port *port,
+				struct i2c_msg *msgs, int num)
+{
+	struct drm_dp_mst_topology_mgr *mgr = port->mgr;
+	unsigned int i;
+	struct drm_dp_sideband_msg_req_body msg;
+	struct drm_dp_sideband_msg_tx *txmsg = NULL;
+	int ret;
+
+	txmsg = kzalloc(sizeof(*txmsg), GFP_KERNEL);
+	if (!txmsg) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	for (i = 0; i < num; i++) {
+		memset(&msg, 0, sizeof(msg));
+		msg.req_type = DP_REMOTE_I2C_WRITE;
+		msg.u.i2c_write.port_number = port->port_num;
+		msg.u.i2c_write.write_i2c_device_id = msgs[i].addr;
+		msg.u.i2c_write.num_bytes = msgs[i].len;
+		msg.u.i2c_write.bytes = msgs[i].buf;
+
+		memset(txmsg, 0, sizeof(*txmsg));
+		txmsg->dst = mstb;
+
+		drm_dp_encode_sideband_req(&msg, txmsg);
+		drm_dp_queue_down_tx(mgr, txmsg);
+
+		ret = drm_dp_mst_wait_tx_reply(mstb, txmsg);
+		if (ret > 0) {
+			if (txmsg->reply.reply_type == DP_SIDEBAND_REPLY_NAK) {
+				ret = -EREMOTEIO;
+				goto out;
+			}
+		} else {
+			goto out;
+		}
+	}
+	ret = num;
+out:
+	kfree(txmsg);
+	return ret;
+}
+
+/* I2C device */
+static int drm_dp_mst_i2c_xfer(struct i2c_adapter *adapter,
+			       struct i2c_msg *msgs, int num)
+{
+	struct drm_dp_aux *aux = adapter->algo_data;
+	struct drm_dp_mst_port *port =
+		container_of(aux, struct drm_dp_mst_port, aux);
+	struct drm_dp_mst_branch *mstb;
+	struct drm_dp_mst_topology_mgr *mgr = port->mgr;
+	int ret;
+
+	mstb = drm_dp_mst_topology_get_mstb_validated(mgr, port->parent);
+	if (!mstb)
+		return -EREMOTEIO;
+
+	if (remote_i2c_read_ok(msgs, num)) {
+		ret = drm_dp_mst_i2c_read(mstb, port, msgs, num);
+	} else if (remote_i2c_write_ok(msgs, num)) {
+		ret = drm_dp_mst_i2c_write(mstb, port, msgs, num);
+	} else {
+		DRM_DEBUG_KMS("Unsupported I2C transaction for MST device\n");
+		ret = -EIO;
+	}
+
 	drm_dp_mst_topology_put_mstb(mstb);
 	return ret;
 }

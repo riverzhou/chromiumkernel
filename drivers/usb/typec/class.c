@@ -517,6 +517,10 @@ typec_register_altmode(struct device *parent,
 	if (is_typec_partner(parent))
 		alt->adev.dev.bus = &typec_bus;
 
+	/* Plug alt modes need a class to generate udev events. */
+	if (is_typec_plug(parent))
+		alt->adev.dev.class = typec_class;
+
 	ret = device_register(&alt->adev.dev);
 	if (ret) {
 		dev_err(parent, "failed to register alternate mode (%d)\n",
@@ -674,6 +678,7 @@ int typec_partner_set_num_altmodes(struct typec_partner *partner, int num_altmod
 		return ret;
 
 	sysfs_notify(&partner->dev.kobj, NULL, "number_of_alternate_modes");
+	kobject_uevent(&partner->dev.kobj, KOBJ_CHANGE);
 
 	return 0;
 }
@@ -831,6 +836,7 @@ int typec_plug_set_num_altmodes(struct typec_plug *plug, int num_altmodes)
 		return ret;
 
 	sysfs_notify(&plug->dev.kobj, NULL, "number_of_alternate_modes");
+	kobject_uevent(&plug->dev.kobj, KOBJ_CHANGE);
 
 	return 0;
 }

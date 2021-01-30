@@ -1387,6 +1387,30 @@ static ssize_t authorized_show(struct device *dev,
 	return sprintf(buf, "%u\n", sw->authorized);
 }
 
+static int disapprove_switch(struct device *dev, void *data)
+{
+	struct tb_switch *sw;
+
+	sw = tb_to_switch(dev);
+	if (sw && sw->authorized) {
+		int ret;
+
+		/* First children */
+		ret = device_for_each_child_reverse(&sw->dev, NULL, disapprove_switch);
+		if (ret)
+			return ret;
+
+		ret = tb_domain_disapprove_switch(sw->tb, sw);
+		if (ret)
+			return ret;
+
+		sw->authorized = 0;
+		kobject_uevent(&sw->dev.kobj, KOBJ_CHANGE);
+	}
+
+	return 0;
+}
+
 static int tb_switch_set_authorized(struct tb_switch *sw, unsigned int val)
 {
 	int ret = -EINVAL;
@@ -1394,10 +1418,18 @@ static int tb_switch_set_authorized(struct tb_switch *sw, unsigned int val)
 	if (!mutex_trylock(&sw->tb->lock))
 		return restart_syscall();
 
-	if (sw->authorized)
+	if (!!sw->authorized == !!val)
 		goto unlock;
 
 	switch (val) {
+	/* Disapprove switch */
+	case 0:
+		if (tb_route(sw)) {
+			ret = disapprove_switch(&sw->dev, NULL);
+			goto unlock;
+		}
+		break;
+
 	/* Approve switch */
 	case 1:
 		if (sw->key)
@@ -2171,6 +2203,7 @@ static int tb_switch_add_dma_port(struct tb_switch *sw)
 
 		/* fallthrough */
 	case 3:
+	case 4:
 		ret = tb_switch_set_uuid(sw);
 		if (ret)
 			return ret;
@@ -2186,15 +2219,28 @@ static int tb_switch_add_dma_port(struct tb_switch *sw)
 		break;
 	}
 
+	if (sw->no_nvm_upgrade)
+		return 0;
+
+	if (tb_switch_is_usb4(sw)) {
+		ret = usb4_switch_nvm_authenticate_status(sw, &status);
+		if (ret)
+			return ret;
+
+		if (status) {
+			tb_sw_info(sw, "switch flash authentication failed\n");
+			nvm_set_auth_status(sw, status);
+		}
+
+		return 0;
+	}
+
 	/* Root switch DMA port requires running firmware */
 	if (!tb_route(sw) && !tb_switch_is_icm(sw))
 		return 0;
 
 	sw->dma_port = dma_port_alloc(sw);
 	if (!sw->dma_port)
-		return 0;
-
-	if (sw->no_nvm_upgrade)
 		return 0;
 
 	/*
