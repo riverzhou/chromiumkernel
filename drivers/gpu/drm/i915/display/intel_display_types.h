@@ -198,6 +198,11 @@ struct intel_encoder {
 	 * device interrupts are disabled.
 	 */
 	void (*suspend)(struct intel_encoder *);
+	/*
+	 * Called during system reboot/shutdown after all the
+	 * encoders have been disabled and suspended.
+	 */
+	void (*shutdown)(struct intel_encoder *encoder);
 	enum hpd_pin hpd_pin;
 	enum intel_display_power_domain power_domain;
 	/* for communication with audio component; protected by av_mutex */
@@ -1296,8 +1301,6 @@ struct intel_dp {
 	unsigned long last_power_on;
 	unsigned long last_backlight_off;
 	ktime_t panel_power_off_time;
-
-	struct notifier_block edp_notifier;
 
 	/*
 	 * Pipe whose power sequencer is currently locked into

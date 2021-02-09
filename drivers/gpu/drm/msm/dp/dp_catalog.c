@@ -5,7 +5,6 @@
 
 #define pr_fmt(fmt)	"[drm-dp] %s: " fmt, __func__
 
-#include <linux/rational.h>
 #include <linux/delay.h>
 #include <linux/iopoll.h>
 #include <linux/phy/phy.h>
@@ -499,11 +498,11 @@ int dp_catalog_ctrl_set_pattern(struct dp_catalog *dp_catalog,
 /**
  * dp_catalog_ctrl_reset() - reset DP controller
  *
- * @aux: DP catalog structure
+ * @dp_catalog: DP catalog structure
  *
  * return: void
  *
- * This function reset DP controller
+ * This function reset the DP controller
  *
  * NOTE: reset DP controller will also clear any pending HPD related interrupts
  * 

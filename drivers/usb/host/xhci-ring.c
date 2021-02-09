@@ -151,10 +151,11 @@ static void next_trb(struct xhci_hcd *xhci,
 
 /*
  * See Cycle bit rules. SW is the consumer for the event ring only.
- * Don't make a ring full of link TRBs.  That would be dumb and this would loop.
  */
 void inc_deq(struct xhci_hcd *xhci, struct xhci_ring *ring)
 {
+	unsigned int link_trb_count = 0;
+
 	/* event ring doesn't have link trbs, check for last trb */
 	if (ring->type == TYPE_EVENT) {
 		if (!last_trb_on_seg(ring->deq_seg, ring->dequeue)) {
@@ -170,14 +171,23 @@ void inc_deq(struct xhci_hcd *xhci, struct xhci_ring *ring)
 
 	/* All other rings have link trbs */
 	if (!trb_is_link(ring->dequeue)) {
-		ring->dequeue++;
-		ring->num_trbs_free++;
+		if (last_trb_on_seg(ring->deq_seg, ring->dequeue)) {
+			xhci_warn(xhci, "Missing link TRB at end of segment\n");
+		} else {
+			ring->dequeue++;
+			ring->num_trbs_free++;
+		}
 	}
+
 	while (trb_is_link(ring->dequeue)) {
 		ring->deq_seg = ring->deq_seg->next;
 		ring->dequeue = ring->deq_seg->trbs;
-	}
 
+		if (link_trb_count++ > ring->num_segs) {
+			xhci_warn(xhci, "Ring is an endless link TRB loop\n");
+			break;
+		}
+	}
 out:
 	trace_xhci_inc_deq(ring);
 
@@ -186,7 +196,6 @@ out:
 
 /*
  * See Cycle bit rules. SW is the consumer for the event ring only.
- * Don't make a ring full of link TRBs.  That would be dumb and this would loop.
  *
  * If we've just enqueued a TRB that is in the middle of a TD (meaning the
  * chain bit is set), then set the chain bit in all the following link TRBs.
@@ -206,11 +215,18 @@ static void inc_enq(struct xhci_hcd *xhci, struct xhci_ring *ring,
 {
 	u32 chain;
 	union xhci_trb *next;
+	unsigned int link_trb_count = 0;
 
 	chain = le32_to_cpu(ring->enqueue->generic.field[3]) & TRB_CHAIN;
 	/* If this is not event ring, there is one less usable TRB */
 	if (!trb_is_link(ring->enqueue))
 		ring->num_trbs_free--;
+
+	if (last_trb_on_seg(ring->enq_seg, ring->enqueue)) {
+		xhci_err(xhci, "Tried to move enqueue past ring segment\n");
+		return;
+	}
+
 	next = ++(ring->enqueue);
 
 	/* Update the dequeue pointer further if that was a link TRB */
@@ -247,6 +263,11 @@ static void inc_enq(struct xhci_hcd *xhci, struct xhci_ring *ring,
 		ring->enq_seg = ring->enq_seg->next;
 		ring->enqueue = ring->enq_seg->trbs;
 		next = ring->enqueue;
+
+		if (link_trb_count++ > ring->num_segs) {
+			xhci_warn(xhci, "%s: Ring link TRB loop\n", __func__);
+			break;
+		}
 	}
 
 	trace_xhci_inc_enq(ring);
@@ -1566,11 +1587,8 @@ event_handled:
 }
 
 static void handle_vendor_event(struct xhci_hcd *xhci,
-		union xhci_trb *event)
+				union xhci_trb *event, u32 trb_type)
 {
-	u32 trb_type;
-
-	trb_type = TRB_FIELD_TO_TYPE(le32_to_cpu(event->generic.field[3]));
 	xhci_dbg(xhci, "Vendor specific event TRB type = %u\n", trb_type);
 	if (trb_type == TRB_NEC_CMD_COMP && (xhci->quirks & XHCI_NEC_HOST))
 		handle_cmd_completion(xhci, &event->event_cmd);
@@ -2734,6 +2752,7 @@ static int xhci_handle_event(struct xhci_hcd *xhci)
 {
 	union xhci_trb *event;
 	int update_ptrs = 1;
+	u32 trb_type;
 	int ret;
 
 	/* Event ring hasn't been allocated yet. */
@@ -2755,31 +2774,30 @@ static int xhci_handle_event(struct xhci_hcd *xhci)
 	 * speculative reads of the event's flags/data below.
 	 */
 	rmb();
+	trb_type = TRB_FIELD_TO_TYPE(le32_to_cpu(event->event_cmd.flags));
 	/* FIXME: Handle more event types. */
-	switch (le32_to_cpu(event->event_cmd.flags) & TRB_TYPE_BITMASK) {
-	case TRB_TYPE(TRB_COMPLETION):
+
+	switch (trb_type) {
+	case TRB_COMPLETION:
 		handle_cmd_completion(xhci, &event->event_cmd);
 		break;
-	case TRB_TYPE(TRB_PORT_STATUS):
+	case TRB_PORT_STATUS:
 		handle_port_status(xhci, event);
 		update_ptrs = 0;
 		break;
-	case TRB_TYPE(TRB_TRANSFER):
+	case TRB_TRANSFER:
 		ret = handle_tx_event(xhci, &event->trans_event);
 		if (ret >= 0)
 			update_ptrs = 0;
 		break;
-	case TRB_TYPE(TRB_DEV_NOTE):
+	case TRB_DEV_NOTE:
 		handle_device_notification(xhci, event);
 		break;
 	default:
-		if ((le32_to_cpu(event->event_cmd.flags) & TRB_TYPE_BITMASK) >=
-		    TRB_TYPE(48))
-			handle_vendor_event(xhci, event);
+		if (trb_type >= TRB_VENDOR_DEFINED_LOW)
+			handle_vendor_event(xhci, event, trb_type);
 		else
-			xhci_warn(xhci, "ERROR unknown event type %d\n",
-				  TRB_FIELD_TO_TYPE(
-				  le32_to_cpu(event->event_cmd.flags)));
+			xhci_warn(xhci, "ERROR unknown event type %d\n", trb_type);
 	}
 	/* Any of the above functions may drop and re-acquire the lock, so check
 	 * to make sure a watchdog timer didn't mark the host as non-responsive.
@@ -2943,6 +2961,8 @@ static void queue_trb(struct xhci_hcd *xhci, struct xhci_ring *ring,
 	trb->field[0] = cpu_to_le32(field1);
 	trb->field[1] = cpu_to_le32(field2);
 	trb->field[2] = cpu_to_le32(field3);
+	/* make sure TRB is fully written before giving it to the controller */
+	wmb();
 	trb->field[3] = cpu_to_le32(field4);
 
 	trace_xhci_queue_trb(ring, trb);
@@ -3036,6 +3056,12 @@ static int prepare_ring(struct xhci_hcd *xhci, struct xhci_ring *ep_ring,
 			return -EINVAL;
 		}
 	}
+
+	if (last_trb_on_seg(ep_ring->enq_seg, ep_ring->enqueue)) {
+		xhci_warn(xhci, "Missing link TRB at end of ring segment\n");
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
