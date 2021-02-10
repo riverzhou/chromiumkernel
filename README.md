@@ -12,14 +12,14 @@ Kernel Source For Chromium OS
 
 
 ---
-- github  git@github.com:riverzhou/chromiumkernel.git (fetch)  
+- github  git@github.com:riverzhou/chromiumkernel.git (fetch)
 - github  git@github.com:riverzhou/chromiumkernel.git (push)  
 
-- android https://android.googlesource.com/kernel/common (fetch)  
-- cloudready      https://github.com/neverware/kernel.git (fetch)  
-- google  https://chromium.googlesource.com/chromiumos/third_party/kernel (fetch)  
-- microsoft       https://github.com/microsoft/WSL2-Linux-Kernel.git (fetch)  
-- ubuntu  https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/focal (fetch)  
+- android https://android.googlesource.com/kernel/common (fetch)
+- cloudready      https://github.com/neverware/kernel.git (fetch)
+- google  https://chromium.googlesource.com/chromiumos/third_party/kernel (fetch)
+- microsoft       https://github.com/microsoft/WSL2-Linux-Kernel.git (fetch)
+- ubuntu  https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/focal (fetch)
 
 ---
 
