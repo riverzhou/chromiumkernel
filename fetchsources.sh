@@ -6,6 +6,7 @@
 git fetch  android android11-5.4-lts
 git fetch  cloudready main
 git fetch  google chromeos-5.4
+git fetch  google chromeos-5.10
 git fetch  ubuntu master
 git fetch  microsoft linux-msft-wsl-5.4.y
 
