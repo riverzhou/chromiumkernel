@@ -8969,9 +8969,9 @@ static void ath10k_mac_get_rate_flags_ht(struct ath10k *ar, u32 rate, u8 nss, u8
 	} else if (rate == mcs_rate[index].supported_rate[3]) {
 		*bw |= RATE_INFO_BW_40;
 		*flags |= RATE_INFO_FLAGS_SHORT_GI;
-	} else {
-		ath10k_warn(ar, "invalid ht params rate %d 100kbps nss %d mcs %d",
-			    rate, nss, mcs);
+	//} else {
+	//	ath10k_warn(ar, "invalid ht params rate %d 100kbps nss %d mcs %d",
+	//		    rate, nss, mcs);
 	}
 }
 

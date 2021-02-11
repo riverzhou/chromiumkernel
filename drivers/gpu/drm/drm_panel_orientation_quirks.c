@@ -15,6 +15,17 @@
 
 #ifdef CONFIG_DMI
 
+static const struct dmi_system_id inverted_screen[] = {
+	{	/* TrekStor SurfTab duo W3 */
+        	.ident = "TrekStor SurfTab duo W3",
+		.matches = {
+		  DMI_MATCH(DMI_SYS_VENDOR, "TrekStor"),
+		  DMI_MATCH(DMI_PRODUCT_NAME, "SurfTab duo W3"),
+		},
+	},
+	{}
+};
+
 /*
  * Some x86 clamshell design devices use portrait tablet screens and a display
  * engine which cannot rotate in hardware, so we need to rotate the fbcon to
@@ -102,6 +113,12 @@ static const struct drm_dmi_panel_orientation_data lcd1200x1920_rightside_up = {
 	.orientation = DRM_MODE_PANEL_ORIENTATION_RIGHT_UP,
 };
 
+static const struct drm_dmi_panel_orientation_data lcd800x1280_bottom_up = {
+	.width = 800,
+	.height = 1280,
+	.orientation = DRM_MODE_PANEL_ORIENTATION_BOTTOM_UP,
+};
+
 static const struct dmi_system_id orientation_data[] = {
 	{	/* Acer One 10 (S1003) */
 		.matches = {
@@ -186,6 +203,25 @@ static const struct dmi_system_id orientation_data[] = {
 		  DMI_EXACT_MATCH(DMI_BOARD_NAME, "TW891"),
 		},
 		.driver_data = (void *)&itworks_tw891,
+	}, {	/* EVOO EV-T2in1-101-2 */
+		.matches = {
+		  DMI_EXACT_MATCH(DMI_SYS_VENDOR, "EVOO Products Company, LLC."),
+		  DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "EV-T2in1-101-2"),
+		},
+		.driver_data = (void *)&lcd800x1280_bottom_up,
+	}, {	/* CHUWI Innovation And Technology(ShenZhen)co.,Ltd Hi10 X */
+		.matches = {
+		  DMI_EXACT_MATCH(DMI_SYS_VENDOR, "CHUWI Innovation And Technology(ShenZhen)co.,Ltd"),
+		  DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "Hi10 X"),
+		},
+		.driver_data = (void *)&lcd1200x1920_rightside_up,
+	}, {	/* Lenovo Ideapad D330 */
+		.matches = {
+		  DMI_EXACT_MATCH(DMI_SYS_VENDOR, "LENOVO"),
+		  DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "81H3"),
+		  DMI_EXACT_MATCH(DMI_PRODUCT_VERSION, "Lenovo ideapad D330-10IGM"),
+		},
+		.driver_data = (void *)&lcd800x1280_rightside_up,
 	}, {	/*
 		 * Lenovo Ideapad Miix 310 laptop, only some production batches
 		 * have a portrait screen, the resolution checks makes the quirk
@@ -246,11 +282,20 @@ int drm_get_panel_orientation_quirk(int width, int height)
 	const struct drm_dmi_panel_orientation_data *data;
 	const char *bios_date;
 	int i;
+	
+	pr_info("drm_get_panel_orientation_quirk called with width=%d height=%d", width, height);
+
+	if (dmi_check_system(inverted_screen)) {
+		pr_info("applying orientation quirk\n");
+		return DRM_MODE_PANEL_ORIENTATION_BOTTOM_UP;
+	}
 
 	for (match = dmi_first_match(orientation_data);
 	     match;
 	     match = dmi_first_match(match + 1)) {
 		data = match->driver_data;
+		
+		pr_info("drm_get_panel_orientation_quirk dmi match found");
 
 		if (data->width != width ||
 		    data->height != height)
@@ -264,8 +309,10 @@ int drm_get_panel_orientation_quirk(int width, int height)
 			continue;
 
 		i = match_string(data->bios_dates, -1, bios_date);
-		if (i >= 0)
+		if (i >= 0) {
+			pr_info("drm_get_panel_orientation_quirk dmi match applied");
 			return data->orientation;
+		}
 	}
 
 	return DRM_MODE_PANEL_ORIENTATION_UNKNOWN;

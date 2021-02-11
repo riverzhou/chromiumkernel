@@ -1578,7 +1578,7 @@ int snd_soc_set_dmi_name(struct snd_soc_card *card, const char *flavour)
 {
 	const char *vendor, *product, *product_version, *board;
 
-	if (card->long_name)
+	//if (card->long_name)
 		return 0; /* long name already set by driver or from DMI */
 
 	/* make up dmi long name as: vendor-product-version-board */

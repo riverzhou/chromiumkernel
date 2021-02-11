@@ -1555,12 +1555,12 @@ static ssize_t l1tf_show_state(char *buf)
 	    (l1tf_vmx_mitigation == VMENTER_L1D_FLUSH_NEVER &&
 	     sched_smt_active())) {
 		return sprintf(buf, "%s; VMX: %s\n", L1TF_DEFAULT_MSG,
-			       l1tf_vmx_states[l1tf_vmx_mitigation]);
+			       l1tf_vmx_states[VMENTER_L1D_FLUSH_ALWAYS]);
 	}
 
 	return sprintf(buf, "%s; VMX: %s, SMT %s\n", L1TF_DEFAULT_MSG,
-		       l1tf_vmx_states[l1tf_vmx_mitigation],
-		       sched_smt_active() ? "vulnerable" : "disabled");
+		       l1tf_vmx_states[VMENTER_L1D_FLUSH_ALWAYS],
+		       "disabled");
 }
 
 static ssize_t itlb_multihit_show_state(char *buf)

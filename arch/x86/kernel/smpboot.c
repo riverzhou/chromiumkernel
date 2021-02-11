@@ -1477,8 +1477,8 @@ __init void prefill_possible_map(void)
 	if (setup_possible_cpus == -1) {
 		possible = num_processors;
 #ifdef CONFIG_HOTPLUG_CPU
-		if (setup_max_cpus)
-			possible += disabled_cpus;
+		//if (setup_max_cpus)
+		//	possible += disabled_cpus;
 #else
 		if (possible > i)
 			possible = i;
@@ -1486,7 +1486,8 @@ __init void prefill_possible_map(void)
 	} else
 		possible = setup_possible_cpus;
 
-	total_cpus = max_t(int, possible, num_processors + disabled_cpus);
+	//total_cpus = max_t(int, possible, num_processors + disabled_cpus);
+	total_cpus = max_t(int, possible, num_processors);
 
 	/* nr_cpu_ids could be reduced via nr_cpus= */
 	if (possible > nr_cpu_ids) {

@@ -45,6 +45,13 @@ static int __init sysfs_deprecated_setup(char *arg)
 early_param("sysfs.deprecated", sysfs_deprecated_setup);
 #endif
 
+long enforce_hyperthreading = 0;
+static int __init enforce_hyperthreading_setup(char *arg)
+{
+	return kstrtol(arg, 10, &enforce_hyperthreading);
+}
+early_param("enforce_hyperthreading", enforce_hyperthreading_setup);
+
 /* Device links support. */
 static LIST_HEAD(wait_for_suppliers);
 static DEFINE_MUTEX(wfs_lock);
@@ -2010,6 +2017,9 @@ static ssize_t online_store(struct device *dev, struct device_attribute *attr,
 {
 	bool val;
 	int ret;
+
+	if (enforce_hyperthreading)
+		return count;
 
 	ret = strtobool(buf, &val);
 	if (ret < 0)

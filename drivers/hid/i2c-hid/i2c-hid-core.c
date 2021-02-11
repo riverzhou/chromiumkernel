@@ -36,6 +36,7 @@
 #include <linux/hid.h>
 #include <linux/mutex.h>
 #include <linux/regulator/consumer.h>
+#include <linux/dmi.h>
 
 #include "../hid-ids.h"
 #include "i2c-hid.h"
@@ -59,6 +60,25 @@
 #define EVE_TP_I2C_ADDR	0x49
 #define EVE_TP_RETRIES	10
 #define EVE_TP_DELAY_MS 1
+
+static const struct dmi_system_id devices[] = 
+	{
+		{
+			.ident = "Microsoft Surface 3",
+			.matches = {
+				DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
+				DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "Surface 3"),
+			},
+		},
+		{
+			.ident = "Microsoft Surface Pro 4",
+			.matches = {
+				DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
+				DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "Surface Pro 4"),
+			},
+		},
+		{}
+	};
 
 /* debug option */
 static bool debug;
@@ -398,6 +418,9 @@ static int i2c_hid_set_power(struct i2c_client *client, int power_state)
 	int ret;
 
 	i2c_hid_dbg(ihid, "%s\n", __func__);
+
+	if (dmi_check_system(devices) && (!strncmp(client->name, "MSHW0030", 8) || !strncmp(client->name, "MSHW0102", 8)))
+		return 0;
 
 	/*
 	 * Some devices require to send a command to wakeup before power on.

@@ -36,6 +36,7 @@
 
 #include "hub.h"
 #include "otg_productlist.h"
+#include "surface_tablet_mode.h"
 
 #define USB_VENDOR_GENESYS_LOGIC		0x05e3
 #define USB_VENDOR_SMSC				0x0424
@@ -1704,6 +1705,8 @@ static void hub_disconnect(struct usb_interface *intf)
 	struct usb_device *hdev = interface_to_usbdev(intf);
 	int port1;
 
+	surface_tablet_mode_fini(hub, hub->hdev->bus->busnum);
+
 	/*
 	 * Stop adding new hub events. We do not want to block here and thus
 	 * will not try to remove any pending work item.
@@ -1878,6 +1881,8 @@ static int hub_probe(struct usb_interface *intf, const struct usb_device_id *id)
 		hub->quirk_disable_autosuspend = 1;
 		usb_autopm_get_interface_no_resume(intf);
 	}
+
+	surface_tablet_mode_init(hub, hub->hdev->bus->busnum);
 
 	if (hub_configure(hub, &desc->endpoint[0].desc) >= 0)
 		return 0;
@@ -5065,6 +5070,8 @@ static void hub_port_connect(struct usb_hub *hub, int port1, u16 portstatus,
 	struct usb_port *port_dev = hub->ports[port1 - 1];
 	struct usb_device *udev = port_dev->child;
 	static int unreliable_port = -1;
+
+	surface_tablet_mode_notify(hub->hdev->bus->busnum, port1, portstatus & USB_PORT_STAT_CONNECTION ? false : true);
 
 	/* Disconnect any existing devices under this port */
 	if (udev) {
