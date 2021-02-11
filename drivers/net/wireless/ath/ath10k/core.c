@@ -12,6 +12,7 @@
 #include <linux/dmi.h>
 #include <linux/ctype.h>
 #include <linux/pm_qos.h>
+#include <linux/surface_devices_dmi.h>
 #include <asm/byteorder.h>
 
 #include "core.h"
@@ -25,6 +26,8 @@
 #include "testmode.h"
 #include "wmi-ops.h"
 #include "coredump.h"
+
+static const struct dmi_system_id devices[] = surface_go_devices;
 
 unsigned int ath10k_debug_mask;
 EXPORT_SYMBOL(ath10k_debug_mask);
@@ -91,7 +94,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.fw_diag_ce_download = false,
 		.tx_stats_over_pktlog = true,
 		.dynamic_sar_support = false,
-		.tx_mac_seq_by_fw = false,
 	},
 	{
 		.id = QCA988X_HW_2_0_VERSION,
@@ -127,7 +129,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.fw_diag_ce_download = false,
 		.tx_stats_over_pktlog = true,
 		.dynamic_sar_support = false,
-		.tx_mac_seq_by_fw = false,
 	},
 	{
 		.id = QCA9887_HW_1_0_VERSION,
@@ -164,7 +165,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.fw_diag_ce_download = false,
 		.tx_stats_over_pktlog = false,
 		.dynamic_sar_support = false,
-		.tx_mac_seq_by_fw = false,
 	},
 	{
 		.id = QCA6174_HW_3_2_VERSION,
@@ -193,7 +193,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.num_wds_entries = 0x20,
 		.uart_pin_workaround = true,
 		.tx_stats_over_pktlog = false,
-		.tx_mac_seq_by_fw = false,
 		.bmi_large_size_download = true,
 		.dynamic_sar_support = true,
 	},
@@ -231,7 +230,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.fw_diag_ce_download = false,
 		.tx_stats_over_pktlog = false,
 		.dynamic_sar_support = false,
-		.tx_mac_seq_by_fw = false,
 	},
 	{
 		.id = QCA6174_HW_2_1_VERSION,
@@ -267,7 +265,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.fw_diag_ce_download = false,
 		.tx_stats_over_pktlog = false,
 		.dynamic_sar_support = false,
-		.tx_mac_seq_by_fw = false,
 	},
 	{
 		.id = QCA6174_HW_3_0_VERSION,
@@ -303,7 +300,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.fw_diag_ce_download = false,
 		.tx_stats_over_pktlog = false,
 		.dynamic_sar_support = false,
-		.tx_mac_seq_by_fw = false,
 	},
 	{
 		.id = QCA6174_HW_3_2_VERSION,
@@ -342,7 +338,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.fw_diag_ce_download = true,
 		.tx_stats_over_pktlog = false,
 		.dynamic_sar_support = true,
-		.tx_mac_seq_by_fw = false,
 	},
 	{
 		.id = QCA99X0_HW_2_0_DEV_VERSION,
@@ -384,7 +379,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.fw_diag_ce_download = false,
 		.tx_stats_over_pktlog = false,
 		.dynamic_sar_support = false,
-		.tx_mac_seq_by_fw = false,
 	},
 	{
 		.id = QCA9984_HW_1_0_DEV_VERSION,
@@ -433,7 +427,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.fw_diag_ce_download = false,
 		.tx_stats_over_pktlog = false,
 		.dynamic_sar_support = false,
-		.tx_mac_seq_by_fw = false,
 	},
 	{
 		.id = QCA9888_HW_2_0_DEV_VERSION,
@@ -479,7 +472,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.fw_diag_ce_download = false,
 		.tx_stats_over_pktlog = false,
 		.dynamic_sar_support = false,
-		.tx_mac_seq_by_fw = false,
 	},
 	{
 		.id = QCA9377_HW_1_0_DEV_VERSION,
@@ -515,7 +507,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.fw_diag_ce_download = false,
 		.tx_stats_over_pktlog = false,
 		.dynamic_sar_support = false,
-		.tx_mac_seq_by_fw = false,
 	},
 	{
 		.id = QCA9377_HW_1_1_DEV_VERSION,
@@ -553,7 +544,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.fw_diag_ce_download = true,
 		.tx_stats_over_pktlog = false,
 		.dynamic_sar_support = false,
-		.tx_mac_seq_by_fw = false,
 	},
 	{
 		.id = QCA9377_HW_1_1_DEV_VERSION,
@@ -624,7 +614,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.fw_diag_ce_download = false,
 		.tx_stats_over_pktlog = false,
 		.dynamic_sar_support = false,
-		.tx_mac_seq_by_fw = false,
 	},
 	{
 		.id = WCN3990_HW_1_0_DEV_VERSION,
@@ -653,7 +642,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.fw_diag_ce_download = false,
 		.tx_stats_over_pktlog = false,
 		.dynamic_sar_support = true,
-		.tx_mac_seq_by_fw = true,
 	},
 };
 
@@ -2308,6 +2296,9 @@ static int ath10k_init_hw_params(struct ath10k *ar)
 	}
 
 	ar->hw_params = *hw_params;
+
+	if (dmi_check_system(devices))
+		ar->hw_params.fw.board = "surface_go.bin";
 
 	ath10k_dbg(ar, ATH10K_DBG_BOOT, "Hardware name %s version 0x%x\n",
 		   ar->hw_params.name, ar->target_version);

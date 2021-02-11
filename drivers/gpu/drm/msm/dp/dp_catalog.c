@@ -499,11 +499,11 @@ int dp_catalog_ctrl_set_pattern(struct dp_catalog *dp_catalog,
 /**
  * dp_catalog_ctrl_reset() - reset DP controller
  *
- * @dp_catalog: DP catalog structure
+ * @aux: DP catalog structure
  *
  * return: void
  *
- * This function reset the DP controller
+ * This function reset DP controller
  *
  * NOTE: reset DP controller will also clear any pending HPD related interrupts
  * 

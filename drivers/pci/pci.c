@@ -1470,10 +1470,6 @@ static void pci_restore_ltr_state(struct pci_dev *dev)
 int pci_save_state(struct pci_dev *dev)
 {
 	int i;
-
-	pcie_save_aspm_control(dev);
-	pcie_disable_aspm(dev);
-
 	/* XXX: 100% dword access ok here? */
 	for (i = 0; i < 16; i++)
 		pci_read_config_dword(dev, i * 4, &dev->saved_config_space[i]);
@@ -1481,20 +1477,16 @@ int pci_save_state(struct pci_dev *dev)
 
 	i = pci_save_pcie_state(dev);
 	if (i != 0)
-		goto exit;
+		return i;
 
 	i = pci_save_pcix_state(dev);
 	if (i != 0)
-		goto exit;
+		return i;
 
 	pci_save_ltr_state(dev);
 	pci_save_aspm_l1ss_state(dev);
 	pci_save_dpc_state(dev);
-	i = pci_save_vc_state(dev);
-
-exit:
-	pcie_restore_aspm_control(dev);
-	return i;
+	return pci_save_vc_state(dev);
 }
 EXPORT_SYMBOL(pci_save_state);
 
@@ -1592,8 +1584,6 @@ void pci_restore_state(struct pci_dev *dev)
 	if (!dev->state_saved)
 		return;
 
-	pcie_disable_aspm(dev);
-
 	/*
 	 * Restore max latencies (in the LTR capability) before enabling
 	 * LTR itself (in the PCIe capability).
@@ -1619,8 +1609,6 @@ void pci_restore_state(struct pci_dev *dev)
 	/* Restore ACS and IOV configuration state */
 	pci_enable_acs(dev);
 	pci_restore_iov_state(dev);
-
-	pcie_restore_aspm_control(dev);
 
 	dev->state_saved = false;
 }
@@ -1736,9 +1724,7 @@ static int do_pci_enable_device(struct pci_dev *dev, int bars)
 	u16 cmd;
 	u8 pin;
 
-	err = pci_set_power_state(dev, PCI_D0);
-	if (err < 0 && err != -EIO)
-		return err;
+	pci_power_up(dev);
 
 	bridge = pci_upstream_bridge(dev);
 	if (bridge)
@@ -2751,6 +2737,32 @@ static const struct dmi_system_id bridge_d3_blacklist[] = {
 	{ }
 };
 
+static const struct dmi_system_id bridge_d3_hotplug_whitelist[] = {
+#ifdef CONFIG_X86
+	{
+		/*
+		 * Microsoft Surface Books have a hot-plug root port for the
+		 * discrete GPU (the device containing it can be detached form
+		 * the top-part, containing the cpu).
+		 *
+		 * If this discrete GPU is not transitioned into D3cold for
+		 * suspend, the device will become notably warm and also
+		 * consume a lot more power than desirable.
+		 *
+		 * We assume that since those devices have been confirmed
+		 * working with D3, future Surface devices will too. So let's
+		 * keep this match generic.
+		 */
+		.ident = "Microsoft Surface",
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Surface"),
+		},
+	},
+#endif
+	{ }
+};
+
 /**
  * pci_bridge_d3_possible - Is it possible to put the bridge into D3
  * @bridge: Bridge to check
@@ -2791,10 +2803,11 @@ bool pci_bridge_d3_possible(struct pci_dev *bridge)
 		/*
 		 * Hotplug ports handled natively by the OS were not validated
 		 * by vendors for runtime D3 at least until 2018 because there
-		 * was no OS support.
+		 * was no OS support. Explicitly whitelist systems that have
+		 * been confirmed working.
 		 */
 		if (bridge->is_hotplug_bridge)
-			return false;
+			return dmi_check_system(bridge_d3_hotplug_whitelist);
 
 		if (dmi_check_system(bridge_d3_blacklist))
 			return false;

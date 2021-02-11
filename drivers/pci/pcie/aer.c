@@ -27,6 +27,7 @@
 #include <linux/delay.h>
 #include <linux/kfifo.h>
 #include <linux/slab.h>
+#include <linux/surface_devices_dmi.h>
 #include <acpi/apei.h>
 #include <ras/ras_event.h>
 
@@ -37,6 +38,8 @@
 
 #define AER_MAX_TYPEOF_COR_ERRS		16	/* as per PCI_ERR_COR_STATUS */
 #define AER_MAX_TYPEOF_UNCOR_ERRS	26	/* as per PCI_ERR_UNCOR_STATUS*/
+
+static const struct dmi_system_id devices[] = surface_go_devices;
 
 struct aer_err_source {
 	unsigned int status;
@@ -109,7 +112,7 @@ void pci_no_aer(void)
 
 bool pci_aer_available(void)
 {
-	return !pcie_aer_disable && pci_msi_enabled();
+	return !pcie_aer_disable && pci_msi_enabled() && !dmi_check_system(devices);
 }
 
 #ifdef CONFIG_PCIE_ECRC

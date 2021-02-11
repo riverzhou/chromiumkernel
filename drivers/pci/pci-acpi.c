@@ -17,7 +17,10 @@
 #include <linux/pci-acpi.h>
 #include <linux/pm_runtime.h>
 #include <linux/pm_qos.h>
+#include <linux/surface_devices_dmi.h>
 #include "pci.h"
+
+static const struct dmi_system_id devices[] = surface_all_devices;
 
 /*
  * The GUID is defined in the PCI Firmware Specification available here:
@@ -1267,6 +1270,11 @@ static void pci_acpi_setup(struct device *dev)
 
 	acpi_pci_wakeup(pci_dev, false);
 	acpi_device_power_add_dependent(adev, dev);
+
+	if (dmi_check_system(devices) &&
+	    pci_dev->bus->self && pci_is_pcie(pci_dev->bus->self) &&
+	    pci_pcie_type(pci_dev->bus->self) == PCI_EXP_TYPE_ROOT_PORT)
+		adev->power.flags.ignore_parent = true;
 }
 
 static void pci_acpi_cleanup(struct device *dev)

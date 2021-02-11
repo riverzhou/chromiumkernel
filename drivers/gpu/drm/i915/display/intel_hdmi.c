@@ -1495,16 +1495,15 @@ static int kbl_repositioning_enc_en_signal(struct intel_connector *connector,
 		usleep_range(25, 50);
 	}
 
-	ret = intel_ddi_toggle_hdcp_bits(&dig_port->base, cpu_transcoder,
-					 false, TRANS_DDI_HDCP_SIGNALLING);
+	ret = intel_ddi_toggle_hdcp_signalling(&dig_port->base, cpu_transcoder,
+					       false);
 	if (ret) {
 		drm_err(&dev_priv->drm,
 			"Disable HDCP signalling failed (%d)\n", ret);
 		return ret;
 	}
-
-	ret = intel_ddi_toggle_hdcp_bits(&dig_port->base, cpu_transcoder,
-					 true, TRANS_DDI_HDCP_SIGNALLING);
+	ret = intel_ddi_toggle_hdcp_signalling(&dig_port->base, cpu_transcoder,
+					       true);
 	if (ret) {
 		drm_err(&dev_priv->drm,
 			"Enable HDCP signalling failed (%d)\n", ret);
@@ -1527,9 +1526,8 @@ int intel_hdmi_hdcp_toggle_signalling(struct intel_digital_port *dig_port,
 	if (!enable)
 		usleep_range(6, 60); /* Bspec says >= 6us */
 
-	ret = intel_ddi_toggle_hdcp_bits(&dig_port->base,
-					 cpu_transcoder, enable,
-					 TRANS_DDI_HDCP_SIGNALLING);
+	ret = intel_ddi_toggle_hdcp_signalling(&dig_port->base, cpu_transcoder,
+					       enable);
 	if (ret) {
 		drm_err(&dev_priv->drm, "%s HDCP signalling failed (%d)\n",
 			enable ? "Enable" : "Disable", ret);
@@ -1733,8 +1731,7 @@ int intel_hdmi_hdcp2_read_msg(struct intel_digital_port *dig_port,
 }
 
 static
-int intel_hdmi_hdcp2_check_link(struct intel_digital_port *dig_port,
-				struct intel_connector *connector)
+int intel_hdmi_hdcp2_check_link(struct intel_digital_port *dig_port)
 {
 	u8 rx_status[HDCP_2_2_HDMI_RXSTATUS_LEN];
 	int ret;
@@ -3317,7 +3314,7 @@ void intel_hdmi_init_connector(struct intel_digital_port *dig_port,
 	intel_hdmi->attached_connector = intel_connector;
 
 	if (is_hdcp_supported(dev_priv, port)) {
-		int ret = intel_hdcp_init(intel_connector, dig_port,
+		int ret = intel_hdcp_init(intel_connector, port,
 					  &intel_hdmi_hdcp_shim);
 		if (ret)
 			drm_dbg_kms(&dev_priv->drm,

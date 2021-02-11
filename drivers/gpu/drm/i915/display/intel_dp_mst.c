@@ -116,7 +116,8 @@ static int intel_dp_mst_compute_config(struct intel_encoder *encoder,
 	pipe_config->has_pch_encoder = false;
 
 	if (intel_conn_state->force_audio == HDMI_AUDIO_AUTO)
-		pipe_config->has_audio = connector->port->has_audio;
+		pipe_config->has_audio =
+			drm_dp_mst_port_has_audio(&intel_dp->mst_mgr, port);
 	else
 		pipe_config->has_audio =
 			intel_conn_state->force_audio == HDMI_AUDIO_ON;
@@ -560,7 +561,7 @@ static void intel_mst_enable_dp(struct intel_atomic_state *state,
 	if (conn_state->content_protection ==
 	    DRM_MODE_CONTENT_PROTECTION_DESIRED)
 		intel_hdcp_enable(to_intel_connector(conn_state->connector),
-				  pipe_config,
+				  pipe_config->cpu_transcoder,
 				  (u8)conn_state->hdcp_content_type);
 }
 
@@ -788,11 +789,12 @@ static struct drm_connector *intel_dp_add_mst_connector(struct drm_dp_mst_topolo
 	intel_attach_force_audio_property(connector);
 	intel_attach_broadcast_rgb_property(connector);
 
-	if (INTEL_GEN(dev_priv) <= 12) {
+
+	/* TODO: Figure out how to make HDCP work on GEN12+ */
+	if (INTEL_GEN(dev_priv) < 12) {
 		ret = intel_dp_init_hdcp(dig_port, intel_connector);
 		if (ret)
-			drm_dbg_kms(&dev_priv->drm, "[%s:%d] HDCP MST init failed, skipping.\n",
-				    connector->name, connector->base.id);
+			DRM_DEBUG_KMS("HDCP init failed, skipping.\n");
 	}
 
 	/*

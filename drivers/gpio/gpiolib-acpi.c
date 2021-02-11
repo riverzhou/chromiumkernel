@@ -256,6 +256,7 @@ static bool acpi_gpio_irq_is_wake(struct device *parent,
 	return true;
 }
 
+/* Always returns AE_OK so that we keep looping over the resources */
 static acpi_status acpi_gpiochip_alloc_event(struct acpi_resource *ares,
 					     void *context)
 {
@@ -293,7 +294,7 @@ static acpi_status acpi_gpiochip_alloc_event(struct acpi_resource *ares,
 					 GPIO_ACTIVE_HIGH, GPIOD_IN);
 	if (IS_ERR(desc)) {
 		dev_err(chip->parent, "Failed to request GPIO\n");
-		return AE_ERROR;
+		return AE_OK;
 	}
 
 	ret = gpiochip_lock_as_irq(chip, pin);
@@ -349,7 +350,7 @@ fail_unlock_irq:
 fail_free_desc:
 	gpiochip_free_own_desc(desc);
 
-	return AE_ERROR;
+	return AE_OK;
 }
 
 /**

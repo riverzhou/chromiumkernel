@@ -34,6 +34,13 @@
 #include "pnode.h"
 #include "internal.h"
 
+long lax_noexec = 0;
+static int __init lax_noexec_setup(char *arg)
+{
+	return kstrtol(arg, 10, &lax_noexec);
+}
+early_param("lax_noexec", lax_noexec_setup);
+
 /* Maximum number of mounts in a mount namespace */
 unsigned int sysctl_mount_max __read_mostly = 100000;
 
@@ -3163,8 +3170,14 @@ long do_mount(const char *dev_name, const char __user *dir_name,
 		mnt_flags |= MNT_NOSUID;
 	if (flags & MS_NODEV)
 		mnt_flags |= MNT_NODEV;
-	if (flags & MS_NOEXEC)
-		mnt_flags |= MNT_NOEXEC;
+	if (flags & MS_NOEXEC) {
+		if (lax_noexec) {
+			if (type_page && strncmp(type_page, "ext4", 4))
+				mnt_flags |= MNT_NOEXEC;
+		} else {
+			mnt_flags |= MNT_NOEXEC;
+		}
+	}
 	if (flags & MS_NOATIME)
 		mnt_flags |= MNT_NOATIME;
 	if (flags & MS_NODIRATIME)

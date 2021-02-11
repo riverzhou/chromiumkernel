@@ -3475,7 +3475,7 @@ int __init vty_init(const struct file_operations *console_fops)
 		panic("Couldn't register /dev/tty0 driver\n");
 	tty0dev = device_create_with_groups(tty_class, NULL,
 					    MKDEV(TTY_MAJOR, 0), NULL,
-					    vt_dev_groups, "tty0");
+					    vt_dev_groups, "brunch-tty0");
 	if (IS_ERR(tty0dev))
 		tty0dev = NULL;
 

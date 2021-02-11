@@ -39,12 +39,15 @@
  */
 
 #include <drm/drm_fourcc.h>
+#include <linux/surface_devices_dmi.h>
 
 #include "i915_drv.h"
 #include "i915_trace.h"
 #include "intel_display_types.h"
 #include "intel_fbc.h"
 #include "intel_frontbuffer.h"
+
+static const struct dmi_system_id devices[] = surface_all_devices;
 
 /*
  * In some platforms where the CRTC's x:0/y:0 coordinates doesn't match the
@@ -694,6 +697,11 @@ static bool intel_fbc_cfb_size_changed(struct drm_i915_private *dev_priv)
 static bool intel_fbc_can_enable(struct drm_i915_private *dev_priv)
 {
 	struct intel_fbc *fbc = &dev_priv->fbc;
+
+	if (dmi_check_system(devices)) {
+		fbc->no_fbc_reason = "unsupported on Microsoft Surface devices";
+		return false;
+	}
 
 	if (intel_vgpu_active(dev_priv)) {
 		fbc->no_fbc_reason = "VGPU is active";
