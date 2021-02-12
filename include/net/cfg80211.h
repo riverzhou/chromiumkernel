@@ -1531,12 +1531,12 @@ struct station_info {
 
 /**
  * struct cfg80211_sar_sub_specs - sub specs limit
- * @power: value in 0.25dbm
+ * @power: power limitation in 0.25dbm
  * @freq_range_index: index the power limitation applies to
  */
 struct cfg80211_sar_sub_specs {
-	u8 power;
-	u8 freq_range_index;
+	s32 power;
+	u32 freq_range_index;
 };
 
 /**
@@ -1547,21 +1547,17 @@ struct cfg80211_sar_sub_specs {
  */
 struct cfg80211_sar_specs {
 	enum nl80211_sar_type type;
-	u16 num_sub_specs;
-	struct cfg80211_sar_sub_specs *sub_specs;
+	u32 num_sub_specs;
+	struct cfg80211_sar_sub_specs sub_specs[];
 };
 
 
 /**
- * @struct cfg80211_sar_chan_ranges - sar frequency ranges
- * @index: the index of this range. It's used to specify
- *	the frequency range when setting SAR power limitation
- * @start_freq:  start channel frequency in kHZ. For example,
- *	2.4G channel 1 is represented as 2412000
- * @end_freq:    end channel frequency in kHZ
+ * struct cfg80211_sar_chan_ranges - sar frequency ranges
+ * @start_freq:  start range edge frequency
+ * @end_freq:    end range edge frequency
  */
 struct cfg80211_sar_freq_ranges {
-	u8 index;
 	u32 start_freq;
 	u32 end_freq;
 };
@@ -1570,11 +1566,14 @@ struct cfg80211_sar_freq_ranges {
  * struct cfg80211_sar_capa - sar limit capability
  * @type: it's set via power in 0.25dbm or other types
  * @num_freq_ranges: number of frequency ranges
- * @chan_ranges: memory to hold the channel ranges.
+ * @freq_ranges: memory to hold the freq ranges.
+ *
+ * Note: WLAN driver may append new ranges or split an existing
+ * range to small ones and then append them.
  */
 struct cfg80211_sar_capa {
 	enum nl80211_sar_type type;
-	u8 num_freq_ranges;
+	u32 num_freq_ranges;
 	const struct cfg80211_sar_freq_ranges *freq_ranges;
 };
 
@@ -3679,6 +3678,8 @@ struct cfg80211_update_owe_info {
  *
  * @probe_mesh_link: Probe direct Mesh peer's link quality by sending data frame
  *	and overrule HWMP path selection algorithm.
+ *
+ * @set_sar_specs: Update the SAR (TX power) settings.
  */
 struct cfg80211_ops {
 	int	(*suspend)(struct wiphy *wiphy, struct cfg80211_wowlan *wow);
@@ -3999,8 +4000,8 @@ struct cfg80211_ops {
 				   struct cfg80211_update_owe_info *owe_info);
 	int	(*probe_mesh_link)(struct wiphy *wiphy, struct net_device *dev,
 				   const u8 *buf, size_t len);
-
-	int	(*set_sar_specs)(struct wiphy *wiphy, struct cfg80211_sar_specs *sar);
+	int	(*set_sar_specs)(struct wiphy *wiphy,
+				 struct cfg80211_sar_specs *sar);
 };
 
 /*
@@ -4594,6 +4595,8 @@ struct cfg80211_pmsr_capabilities {
  *	@support_mbssid must be set for this to have any effect.
  *
  * @pmsr_capa: peer measurement capabilities
+ *
+ * @sar_capa: SAR control capabilities
  */
 struct wiphy {
 	/* assign these fields before you register the wiphy */

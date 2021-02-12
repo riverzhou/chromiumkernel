@@ -32,6 +32,7 @@ static bool force_scofix;
 static bool enable_autosuspend = IS_ENABLED(CONFIG_BT_HCIBTUSB_AUTOSUSPEND);
 static bool enable_interval = IS_ENABLED(CONFIG_BT_HCIBTUSB_INTERVAL);
 static bool reset = true;
+static bool reload_firmware = true;
 
 static struct usb_driver btusb_driver;
 
@@ -2449,6 +2450,13 @@ static int btusb_setup_intel_new(struct hci_dev *hdev)
 	if (ver.fw_variant == 0x23) {
 		clear_bit(BTUSB_BOOTLOADER, &data->flags);
 		btintel_check_bdaddr(hdev);
+
+		if (reload_firmware) {
+			bt_dev_err(hdev, "Intel reloading firmware on reboot");
+			btintel_reset_to_bootloader(hdev);
+			reload_firmware = false;
+			return -EINVAL;
+		}
 		goto finish;
 	}
 
@@ -2669,7 +2677,10 @@ finish:
 	 * extension are using 0xFC1E for VsMsftOpCode.
 	 */
 	switch (ver.hw_variant) {
+	case 0x11:	/* JfP */
 	case 0x12:	/* ThP */
+	case 0x13:	/* HrP */
+	case 0x14:	/* CcP */
 		hci_set_msft_opcode(hdev, 0xFC1E);
 		break;
 	}
