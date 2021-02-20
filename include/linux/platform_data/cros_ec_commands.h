@@ -3499,6 +3499,7 @@ struct ec_response_get_next_event_v1 {
 #define EC_MKBP_LID_OPEN	0
 #define EC_MKBP_TABLET_MODE	1
 #define EC_MKBP_BASE_ATTACHED	2
+#define EC_MKBP_FRONT_PROXIMITY	3
 
 /* Run keyboard factory test scanning */
 #define EC_CMD_KEYBOARD_FACTORY_TEST 0x0068
@@ -5536,6 +5537,8 @@ enum pchg_state {
 	PCHG_STATE_DETECTED,
 	/* Device is being charged. */
 	PCHG_STATE_CHARGING,
+	/* Device is fully charged. It implies DETECTED (& not charging). */
+	PCHG_STATE_FULL,
 };
 
 #define EC_PCHG_STATE_TEXT { \
@@ -5544,6 +5547,7 @@ enum pchg_state {
 	[PCHG_STATE_ENABLED] = "ENABLED", \
 	[PCHG_STATE_DETECTED] = "DETECTED", \
 	[PCHG_STATE_CHARGING] = "CHARGING", \
+	[PCHG_STATE_FULL] = "FULL", \
 	}
 
 /*****************************************************************************/

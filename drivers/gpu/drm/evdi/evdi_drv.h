@@ -26,10 +26,11 @@
 
 #define DRIVER_NAME   "evdi"
 #define DRIVER_DESC   "Extensible Virtual Display Interface"
-#define DRIVER_DATE   "20200707"
+#define DRIVER_DATE   "20201210"
+
 
 #define DRIVER_MAJOR      1
-#define DRIVER_MINOR      8
+#define DRIVER_MINOR      9
 #define DRIVER_PATCHLEVEL 0
 
 struct evdi_fbdev;
@@ -118,6 +119,8 @@ vm_fault_t evdi_gem_fault(struct vm_fault *vmf);
 void evdi_stats_init(struct evdi_device *evdi);
 void evdi_stats_cleanup(struct evdi_device *evdi);
 
+void evdi_platform_device_unlink_if_linked_with(struct platform_device *pdev,
+				struct device *parent);
 bool evdi_painter_is_connected(struct evdi_device *evdi);
 void evdi_painter_close(struct evdi_device *evdi, struct drm_file *file);
 u8 *evdi_painter_get_edid_copy(struct evdi_device *evdi);

@@ -1402,7 +1402,8 @@
 		ipa: ipa@1e40000 {
 			compatible = "qcom,sc7180-ipa";
 
-			iommus = <&apps_smmu 0x440 0x3>;
+			iommus = <&apps_smmu 0x440 0x0>,
+				 <&apps_smmu 0x442 0x0>;
 			reg = <0 0x1e40000 0 0x7000>,
 			      <0 0x1e47000 0 0x2000>,
 			      <0 0x1e04000 0 0x2c000>;
@@ -1410,8 +1411,8 @@
 				    "ipa-shared",
 				    "gsi";
 
-			interrupts-extended = <&intc 0 311 IRQ_TYPE_EDGE_RISING>,
-					      <&intc 0 432 IRQ_TYPE_LEVEL_HIGH>,
+			interrupts-extended = <&intc GIC_SPI 311 IRQ_TYPE_EDGE_RISING>,
+					      <&intc GIC_SPI 432 IRQ_TYPE_LEVEL_HIGH>,
 					      <&ipa_smp2p_in 0 IRQ_TYPE_EDGE_RISING>,
 					      <&ipa_smp2p_in 1 IRQ_TYPE_EDGE_RISING>;
 			interrupt-names = "ipa",
@@ -2897,8 +2898,6 @@
 
 			video-encoder {
 				compatible = "venus-encoder";
-				/* TODO(b/175315142) : enable when quality is adequate */
-				status = "disabled";
 			};
 
 			venus_opp_table: venus-opp-table {
@@ -3681,7 +3680,7 @@
 	};
 
 	thermal-zones {
-		cpu0-thermal {
+		cpu0_thermal: cpu0-thermal {
 			polling-delay-passive = <250>;
 			polling-delay = <0>;
 
@@ -3730,7 +3729,7 @@
 			};
 		};
 
-		cpu1-thermal {
+		cpu1_thermal: cpu1-thermal {
 			polling-delay-passive = <250>;
 			polling-delay = <0>;
 
@@ -3779,7 +3778,7 @@
 			};
 		};
 
-		cpu2-thermal {
+		cpu2_thermal: cpu2-thermal {
 			polling-delay-passive = <250>;
 			polling-delay = <0>;
 
@@ -3828,7 +3827,7 @@
 			};
 		};
 
-		cpu3-thermal {
+		cpu3_thermal: cpu3-thermal {
 			polling-delay-passive = <250>;
 			polling-delay = <0>;
 
@@ -3877,7 +3876,7 @@
 			};
 		};
 
-		cpu4-thermal {
+		cpu4_thermal: cpu4-thermal {
 			polling-delay-passive = <250>;
 			polling-delay = <0>;
 
@@ -3926,7 +3925,7 @@
 			};
 		};
 
-		cpu5-thermal {
+		cpu5_thermal: cpu5-thermal {
 			polling-delay-passive = <250>;
 			polling-delay = <0>;
 
@@ -3975,7 +3974,7 @@
 			};
 		};
 
-		cpu6-thermal {
+		cpu6_thermal: cpu6-thermal {
 			polling-delay-passive = <250>;
 			polling-delay = <0>;
 
@@ -4016,7 +4015,7 @@
 			};
 		};
 
-		cpu7-thermal {
+		cpu7_thermal: cpu7-thermal {
 			polling-delay-passive = <250>;
 			polling-delay = <0>;
 
@@ -4057,7 +4056,7 @@
 			};
 		};
 
-		cpu8-thermal {
+		cpu8_thermal: cpu8-thermal {
 			polling-delay-passive = <250>;
 			polling-delay = <0>;
 
@@ -4098,7 +4097,7 @@
 			};
 		};
 
-		cpu9-thermal {
+		cpu9_thermal: cpu9-thermal {
 			polling-delay-passive = <250>;
 			polling-delay = <0>;
 
