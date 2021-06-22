@@ -217,6 +217,10 @@ enum port {
 	PORT_TC5,
 	PORT_TC6,
 
+	/* XE_LPD repositions D/E offsets and bitfields */
+	PORT_D_XELPD = PORT_TC5,
+	PORT_E_XELPD,
+
 	I915_MAX_PORTS
 };
 
@@ -300,6 +304,10 @@ enum aux_ch {
 	AUX_CH_USBC4,
 	AUX_CH_USBC5,
 	AUX_CH_USBC6,
+
+	/* XE_LPD repositions D/E offsets and bitfields */
+	AUX_CH_D_XELPD = AUX_CH_USBC5,
+	AUX_CH_E_XELPD,
 };
 
 #define aux_ch_name(a) ((a) + 'A')
@@ -644,6 +652,7 @@ void intel_modeset_driver_remove_noirq(struct drm_i915_private *i915);
 void intel_modeset_driver_remove_nogem(struct drm_i915_private *i915);
 void intel_display_resume(struct drm_device *dev);
 void intel_init_pch_refclk(struct drm_i915_private *dev_priv);
+int intel_modeset_all_pipes(struct intel_atomic_state *state);
 
 /* modesetting asserts */
 void assert_panel_unlocked(struct drm_i915_private *dev_priv,

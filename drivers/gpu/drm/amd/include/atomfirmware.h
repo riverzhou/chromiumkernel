@@ -197,6 +197,9 @@ enum atom_dp_vs_preemph_def{
   DP_VS_LEVEL0_PREEMPH_LEVEL3 = 0x18,
 };
 
+#define BIOS_ATOM_PREFIX   "ATOMBIOS"
+#define BIOS_VERSION_PREFIX  "ATOMBIOSBK-AMD"
+#define BIOS_STRING_LENGTH 43
 
 /*
 enum atom_string_def{
@@ -209,12 +212,14 @@ atom_bios_string          = "ATOM"
 #pragma pack(1)                          /* BIOS data must use byte aligment*/
 
 enum atombios_image_offset{
-OFFSET_TO_ATOM_ROM_HEADER_POINTER          =0x00000048,
-OFFSET_TO_ATOM_ROM_IMAGE_SIZE              =0x00000002,
-OFFSET_TO_ATOMBIOS_ASIC_BUS_MEM_TYPE       =0x94,
-MAXSIZE_OF_ATOMBIOS_ASIC_BUS_MEM_TYPE      =20,  /*including the terminator 0x0!*/
-OFFSET_TO_GET_ATOMBIOS_NUMBER_OF_STRINGS   =0x2f,
-OFFSET_TO_GET_ATOMBIOS_STRING_START        =0x6e,
+  OFFSET_TO_ATOM_ROM_HEADER_POINTER          = 0x00000048,
+  OFFSET_TO_ATOM_ROM_IMAGE_SIZE              = 0x00000002,
+  OFFSET_TO_ATOMBIOS_ASIC_BUS_MEM_TYPE       = 0x94,
+  MAXSIZE_OF_ATOMBIOS_ASIC_BUS_MEM_TYPE      = 20,  /*including the terminator 0x0!*/
+  OFFSET_TO_GET_ATOMBIOS_NUMBER_OF_STRINGS   = 0x2f,
+  OFFSET_TO_GET_ATOMBIOS_STRING_START        = 0x6e,
+  OFFSET_TO_VBIOS_PART_NUMBER                = 0x80,
+  OFFSET_TO_VBIOS_DATE                       = 0x50,
 };
 
 /****************************************************************************   
@@ -501,6 +506,7 @@ enum atombios_firmware_capability
 	ATOM_FIRMWARE_CAP_SRAM_ECC      = 0x00000200,
 	ATOM_FIRMWARE_CAP_ENABLE_2STAGE_BIST_TRAINING  = 0x00000400,
 	ATOM_FIRMWARE_CAP_ENABLE_2ND_USB20PORT = 0x0008000,
+	ATOM_FIRMWARE_CAP_DYNAMIC_BOOT_CFG_ENABLE = 0x0020000,
 };
 
 enum atom_cooling_solution_id{
@@ -877,7 +883,8 @@ struct  atom_bracket_layout_record
 };
 
 enum atom_display_device_tag_def{
-  ATOM_DISPLAY_LCD1_SUPPORT            = 0x0002,  //an embedded display is either an LVDS or eDP signal type of display
+  ATOM_DISPLAY_LCD1_SUPPORT            = 0x0002, //an embedded display is either an LVDS or eDP signal type of display
+  ATOM_DISPLAY_LCD2_SUPPORT			       = 0x0020, //second edp device tag 0x0020 for backward compability
   ATOM_DISPLAY_DFP1_SUPPORT            = 0x0008,
   ATOM_DISPLAY_DFP2_SUPPORT            = 0x0080,
   ATOM_DISPLAY_DFP3_SUPPORT            = 0x0200,
@@ -1405,6 +1412,59 @@ struct atom_integrated_system_info_v2_1
         uint32_t reserved6[30];// reserve size of(atom_camera_data) for camera_info
         uint32_t reserved7[32];
 
+};
+
+struct atom_n6_display_phy_tuning_set {
+	uint8_t display_signal_type;
+	uint8_t phy_sel;
+	uint8_t preset_level;
+	uint8_t reserved1;
+	uint32_t reserved2;
+	uint32_t speed_upto;
+	uint8_t tx_vboost_level;
+	uint8_t tx_vreg_v2i;
+	uint8_t tx_vregdrv_byp;
+	uint8_t tx_term_cntl;
+	uint8_t tx_peak_level;
+	uint8_t tx_slew_en;
+	uint8_t tx_eq_pre;
+	uint8_t tx_eq_main;
+	uint8_t tx_eq_post;
+	uint8_t tx_en_inv_pre;
+	uint8_t tx_en_inv_post;
+	uint8_t reserved3;
+	uint32_t reserved4;
+	uint32_t reserved5;
+	uint32_t reserved6;
+};
+
+struct atom_display_phy_tuning_info {
+	struct atom_common_table_header table_header;
+	struct atom_n6_display_phy_tuning_set disp_phy_tuning[1];
+};
+
+struct atom_integrated_system_info_v2_2
+{
+	struct  atom_common_table_header  table_header;
+	uint32_t  vbios_misc;                       //enum of atom_system_vbiosmisc_def
+	uint32_t  gpucapinfo;                       //enum of atom_system_gpucapinf_def
+	uint32_t  system_config;
+	uint32_t  cpucapinfo;
+	uint16_t  gpuclk_ss_percentage;             //unit of 0.001%,   1000 mean 1%
+	uint16_t  gpuclk_ss_type;
+	uint16_t  dpphy_override;                   // bit vector, enum of atom_sysinfo_dpphy_override_def
+	uint8_t   memorytype;                       // enum of atom_dmi_t17_mem_type_def, APU memory type indication.
+	uint8_t   umachannelnumber;                 // number of memory channels
+	uint8_t   htc_hyst_limit;
+	uint8_t   htc_tmp_limit;
+	uint8_t   reserved1;
+	uint8_t   reserved2;
+	struct edp_info_table edp1_info;
+	struct edp_info_table edp2_info;
+	uint32_t  reserved3[8];
+	struct atom_external_display_connection_info extdispconninfo;
+
+	uint32_t  reserved4[189];
 };
 
 // system_config
@@ -3334,6 +3394,47 @@ enum atom_smu11_syspll3_1_clock_id {
   SMU11_SYSPLL3_1_MP1CLK_ID = 0,       //	MP1CLK
   SMU11_SYSPLL3_1_SMNCLK_ID = 1,       //	SMNCLK
   SMU11_SYSPLL3_1_LCLK_ID = 2,         //	LCLK
+};
+
+enum atom_smu12_syspll_id {
+  SMU12_SYSPLL0_ID          = 0,
+  SMU12_SYSPLL1_ID          = 1,
+  SMU12_SYSPLL2_ID          = 2,
+  SMU12_SYSPLL3_0_ID        = 3,
+  SMU12_SYSPLL3_1_ID        = 4,
+};
+
+enum atom_smu12_syspll0_clock_id {
+  SMU12_SYSPLL0_SMNCLK_ID   = 0,			//	SOCCLK
+  SMU12_SYSPLL0_SOCCLK_ID   = 1,			//	SOCCLK
+  SMU12_SYSPLL0_MP0CLK_ID   = 2,			//	MP0CLK
+  SMU12_SYSPLL0_MP1CLK_ID   = 3,			//	MP1CLK
+  SMU12_SYSPLL0_MP2CLK_ID   = 4,			//	MP2CLK
+  SMU12_SYSPLL0_VCLK_ID     = 5,			//	VCLK
+  SMU12_SYSPLL0_LCLK_ID     = 6,			//	LCLK
+  SMU12_SYSPLL0_DCLK_ID     = 7,			//	DCLK
+  SMU12_SYSPLL0_ACLK_ID     = 8,			//	ACLK
+  SMU12_SYSPLL0_ISPCLK_ID   = 9,			//	ISPCLK
+  SMU12_SYSPLL0_SHUBCLK_ID  = 10,			//	SHUBCLK
+};
+
+enum atom_smu12_syspll1_clock_id {
+  SMU12_SYSPLL1_DISPCLK_ID  = 0,      //	DISPCLK
+  SMU12_SYSPLL1_DPPCLK_ID   = 1,      //	DPPCLK
+  SMU12_SYSPLL1_DPREFCLK_ID = 2,      //	DPREFCLK
+  SMU12_SYSPLL1_DCFCLK_ID   = 3,      //	DCFCLK
+};
+
+enum atom_smu12_syspll2_clock_id {
+  SMU12_SYSPLL2_Pre_GFXCLK_ID = 0,   // Pre_GFXCLK
+};
+
+enum atom_smu12_syspll3_0_clock_id {
+  SMU12_SYSPLL3_0_FCLK_ID = 0,      //	FCLK
+};
+
+enum atom_smu12_syspll3_1_clock_id {
+  SMU12_SYSPLL3_1_UMCCLK_ID = 0,    //	UMCCLK
 };
 
 struct  atom_get_smu_clock_info_output_parameters_v3_1

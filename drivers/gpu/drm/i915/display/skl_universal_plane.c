@@ -199,6 +199,13 @@ static const u64 gen12_plane_format_modifiers_rc_ccs[] = {
 	DRM_FORMAT_MOD_INVALID
 };
 
+static const u64 adlp_step_a_plane_format_modifiers[] = {
+	I915_FORMAT_MOD_Y_TILED,
+	I915_FORMAT_MOD_X_TILED,
+	DRM_FORMAT_MOD_LINEAR,
+	DRM_FORMAT_MOD_INVALID
+};
+
 int skl_format_to_fourcc(int format, bool rgb_order, bool alpha)
 {
 	switch (format) {
@@ -268,7 +275,7 @@ int skl_format_to_fourcc(int format, bool rgb_order, bool alpha)
 
 static u8 icl_nv12_y_plane_mask(struct drm_i915_private *i915)
 {
-	if (HAS_D12_PLANE_MINIMIZATION(i915))
+	if (DISPLAY_VER(i915) >= 13 || HAS_D12_PLANE_MINIMIZATION(i915))
 		return BIT(PLANE_SPRITE2) | BIT(PLANE_SPRITE3);
 	else
 		return BIT(PLANE_SPRITE4) | BIT(PLANE_SPRITE5);
@@ -287,22 +294,51 @@ bool icl_is_hdr_plane(struct drm_i915_private *dev_priv, enum plane_id plane_id)
 		icl_hdr_plane_mask() & BIT(plane_id);
 }
 
+static int icl_plane_min_cdclk(const struct intel_crtc_state *crtc_state,
+			       const struct intel_plane_state *plane_state)
+{
+	unsigned int pixel_rate = intel_plane_pixel_rate(crtc_state, plane_state);
+
+	/* two pixels per clock */
+	return DIV_ROUND_UP(pixel_rate, 2);
+}
+
 static void
-skl_plane_ratio(const struct intel_crtc_state *crtc_state,
-		const struct intel_plane_state *plane_state,
+glk_plane_ratio(const struct intel_plane_state *plane_state,
 		unsigned int *num, unsigned int *den)
 {
-	struct drm_i915_private *dev_priv = to_i915(plane_state->uapi.plane->dev);
 	const struct drm_framebuffer *fb = plane_state->hw.fb;
 
 	if (fb->format->cpp[0] == 8) {
-		if (DISPLAY_VER(dev_priv) >= 10) {
-			*num = 10;
-			*den = 8;
-		} else {
-			*num = 9;
-			*den = 8;
-		}
+		*num = 10;
+		*den = 8;
+	} else {
+		*num = 1;
+		*den = 1;
+	}
+}
+
+static int glk_plane_min_cdclk(const struct intel_crtc_state *crtc_state,
+			       const struct intel_plane_state *plane_state)
+{
+	unsigned int pixel_rate = intel_plane_pixel_rate(crtc_state, plane_state);
+	unsigned int num, den;
+
+	glk_plane_ratio(plane_state, &num, &den);
+
+	/* two pixels per clock */
+	return DIV_ROUND_UP(pixel_rate * num, 2 * den);
+}
+
+static void
+skl_plane_ratio(const struct intel_plane_state *plane_state,
+		unsigned int *num, unsigned int *den)
+{
+	const struct drm_framebuffer *fb = plane_state->hw.fb;
+
+	if (fb->format->cpp[0] == 8) {
+		*num = 9;
+		*den = 8;
 	} else {
 		*num = 1;
 		*den = 1;
@@ -312,15 +348,10 @@ skl_plane_ratio(const struct intel_crtc_state *crtc_state,
 static int skl_plane_min_cdclk(const struct intel_crtc_state *crtc_state,
 			       const struct intel_plane_state *plane_state)
 {
-	struct drm_i915_private *dev_priv = to_i915(plane_state->uapi.plane->dev);
-	unsigned int num, den;
 	unsigned int pixel_rate = intel_plane_pixel_rate(crtc_state, plane_state);
+	unsigned int num, den;
 
-	skl_plane_ratio(crtc_state, plane_state, &num, &den);
-
-	/* two pixels per clock on glk+ */
-	if (DISPLAY_VER(dev_priv) >= 10)
-		den *= 2;
+	skl_plane_ratio(plane_state, &num, &den);
 
 	return DIV_ROUND_UP(pixel_rate * num, den);
 }
@@ -819,6 +850,29 @@ static u32 cnl_plane_ctl_flip(unsigned int reflect)
 	return 0;
 }
 
+static u32 adlp_plane_ctl_arb_slots(const struct intel_plane_state *plane_state)
+{
+	const struct drm_framebuffer *fb = plane_state->hw.fb;
+
+	if (intel_format_info_is_yuv_semiplanar(fb->format, fb->modifier)) {
+		switch (fb->format->cpp[0]) {
+		case 2:
+			return PLANE_CTL_ARB_SLOTS(1);
+		default:
+			return PLANE_CTL_ARB_SLOTS(0);
+		}
+	} else {
+		switch (fb->format->cpp[0]) {
+		case 8:
+			return PLANE_CTL_ARB_SLOTS(3);
+		case 4:
+			return PLANE_CTL_ARB_SLOTS(1);
+		default:
+			return PLANE_CTL_ARB_SLOTS(0);
+		}
+	}
+}
+
 static u32 skl_plane_ctl_crtc(const struct intel_crtc_state *crtc_state)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc_state->uapi.crtc->dev);
@@ -871,6 +925,10 @@ static u32 skl_plane_ctl(const struct intel_crtc_state *crtc_state,
 		plane_ctl |= PLANE_CTL_KEY_ENABLE_DESTINATION;
 	else if (key->flags & I915_SET_COLORKEY_SOURCE)
 		plane_ctl |= PLANE_CTL_KEY_ENABLE_SOURCE;
+
+	/* Wa_22012358565:adlp */
+	if (DISPLAY_VER(dev_priv) == 13)
+		plane_ctl |= adlp_plane_ctl_arb_slots(plane_state);
 
 	return plane_ctl;
 }
@@ -1855,6 +1913,10 @@ static bool gen12_plane_supports_mc_ccs(struct drm_i915_private *dev_priv,
 	    IS_TGL_DISPLAY_STEP(dev_priv, STEP_A0, STEP_C0))
 		return false;
 
+	/* Wa_22011186057 */
+	if (IS_ADLP_DISPLAY_STEP(dev_priv, STEP_A0, STEP_A0))
+		return false;
+
 	return plane_id < PLANE_SPRITE4;
 }
 
@@ -1872,8 +1934,12 @@ static bool gen12_plane_format_mod_supported(struct drm_plane *_plane,
 	case DRM_FORMAT_MOD_LINEAR:
 	case I915_FORMAT_MOD_X_TILED:
 	case I915_FORMAT_MOD_Y_TILED:
+		break;
 	case I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS:
 	case I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS_CC:
+		/* Wa_22011186057 */
+		if (IS_ADLP_DISPLAY_STEP(dev_priv, STEP_A0, STEP_A0))
+			return false;
 		break;
 	default:
 		return false;
@@ -1928,7 +1994,10 @@ static bool gen12_plane_format_mod_supported(struct drm_plane *_plane,
 static const u64 *gen12_get_plane_modifiers(struct drm_i915_private *dev_priv,
 					    enum plane_id plane_id)
 {
-	if (gen12_plane_supports_mc_ccs(dev_priv, plane_id))
+	/* Wa_22011186057 */
+	if (IS_ADLP_DISPLAY_STEP(dev_priv, STEP_A0, STEP_A0))
+		return adlp_step_a_plane_format_modifiers;
+	else if (gen12_plane_supports_mc_ccs(dev_priv, plane_id))
 		return gen12_plane_format_modifiers_mc_ccs;
 	else
 		return gen12_plane_format_modifiers_rc_ccs;
@@ -2007,12 +2076,15 @@ skl_universal_plane_create(struct drm_i915_private *dev_priv,
 		plane->min_width = icl_plane_min_width;
 		plane->max_width = icl_plane_max_width;
 		plane->max_height = icl_plane_max_height;
+		plane->min_cdclk = icl_plane_min_cdclk;
 	} else if (DISPLAY_VER(dev_priv) >= 10) {
 		plane->max_width = glk_plane_max_width;
 		plane->max_height = skl_plane_max_height;
+		plane->min_cdclk = glk_plane_min_cdclk;
 	} else {
 		plane->max_width = skl_plane_max_width;
 		plane->max_height = skl_plane_max_height;
+		plane->min_cdclk = skl_plane_min_cdclk;
 	}
 
 	plane->max_stride = skl_plane_max_stride;
@@ -2020,7 +2092,6 @@ skl_universal_plane_create(struct drm_i915_private *dev_priv,
 	plane->disable_plane = skl_disable_plane;
 	plane->get_hw_state = skl_plane_get_hw_state;
 	plane->check_plane = skl_plane_check;
-	plane->min_cdclk = skl_plane_min_cdclk;
 
 	if (plane_id == PLANE_PRIMARY) {
 		plane->need_async_flip_disable_wa = IS_DISPLAY_VER(dev_priv,
@@ -2066,9 +2137,12 @@ skl_universal_plane_create(struct drm_i915_private *dev_priv,
 	if (ret)
 		goto fail;
 
-	supported_rotations =
-		DRM_MODE_ROTATE_0 | DRM_MODE_ROTATE_90 |
-		DRM_MODE_ROTATE_180 | DRM_MODE_ROTATE_270;
+	if (DISPLAY_VER(dev_priv) >= 13)
+		supported_rotations = DRM_MODE_ROTATE_0 | DRM_MODE_ROTATE_180;
+	else
+		supported_rotations =
+			DRM_MODE_ROTATE_0 | DRM_MODE_ROTATE_90 |
+			DRM_MODE_ROTATE_180 | DRM_MODE_ROTATE_270;
 
 	if (DISPLAY_VER(dev_priv) >= 11 || IS_CANNONLAKE(dev_priv))
 		supported_rotations |= DRM_MODE_REFLECT_X;

@@ -1651,7 +1651,7 @@ static u8 map_ddc_pin(struct drm_i915_private *i915, u8 vbt_pin)
 	const u8 *ddc_pin_map;
 	int n_entries;
 
-	if (HAS_PCH_ADP(i915)) {
+	if (IS_ALDERLAKE_S(i915)) {
 		ddc_pin_map = adls_ddc_pin_map;
 		n_entries = ARRAY_SIZE(adls_ddc_pin_map);
 	} else if (INTEL_PCH_TYPE(i915) >= PCH_DG1) {
@@ -1743,8 +1743,24 @@ static enum port dvo_port_to_port(struct drm_i915_private *i915,
 		[PORT_TC3] = { DVO_PORT_HDMID, DVO_PORT_DPD, -1 },
 		[PORT_TC4] = { DVO_PORT_HDMIE, DVO_PORT_DPE, -1 },
 	};
+	static const int xelpd_port_mapping[][3] = {
+		[PORT_A] = { DVO_PORT_HDMIA, DVO_PORT_DPA, -1 },
+		[PORT_B] = { DVO_PORT_HDMIB, DVO_PORT_DPB, -1 },
+		[PORT_C] = { DVO_PORT_HDMIC, DVO_PORT_DPC, -1 },
+		[PORT_D_XELPD] = { DVO_PORT_HDMID, DVO_PORT_DPD, -1 },
+		[PORT_E_XELPD] = { DVO_PORT_HDMIE, DVO_PORT_DPE, -1 },
+		[PORT_TC1] = { DVO_PORT_HDMIF, DVO_PORT_DPF, -1 },
+		[PORT_TC2] = { DVO_PORT_HDMIG, DVO_PORT_DPG, -1 },
+		[PORT_TC3] = { DVO_PORT_HDMIH, DVO_PORT_DPH, -1 },
+		[PORT_TC4] = { DVO_PORT_HDMII, DVO_PORT_DPI, -1 },
+	};
 
-	if (IS_ALDERLAKE_S(i915))
+	if (DISPLAY_VER(i915) == 13)
+		return __dvo_port_to_port(ARRAY_SIZE(xelpd_port_mapping),
+					  ARRAY_SIZE(xelpd_port_mapping[0]),
+					  xelpd_port_mapping,
+					  dvo_port);
+	else if (IS_ALDERLAKE_S(i915))
 		return __dvo_port_to_port(ARRAY_SIZE(adls_port_mapping),
 					  ARRAY_SIZE(adls_port_mapping[0]),
 					  adls_port_mapping,
@@ -2873,7 +2889,9 @@ enum aux_ch intel_bios_port_aux_ch(struct drm_i915_private *i915,
 			aux_ch = AUX_CH_C;
 		break;
 	case DP_AUX_D:
-		if (IS_ALDERLAKE_S(i915))
+		if (DISPLAY_VER(i915) == 13)
+			aux_ch = AUX_CH_D_XELPD;
+		else if (IS_ALDERLAKE_S(i915))
 			aux_ch = AUX_CH_USBC3;
 		else if (IS_DG1(i915) || IS_ROCKETLAKE(i915))
 			aux_ch = AUX_CH_USBC2;
@@ -2881,22 +2899,36 @@ enum aux_ch intel_bios_port_aux_ch(struct drm_i915_private *i915,
 			aux_ch = AUX_CH_D;
 		break;
 	case DP_AUX_E:
-		if (IS_ALDERLAKE_S(i915))
+		if (DISPLAY_VER(i915) == 13)
+			aux_ch = AUX_CH_E_XELPD;
+		else if (IS_ALDERLAKE_S(i915))
 			aux_ch = AUX_CH_USBC4;
 		else
 			aux_ch = AUX_CH_E;
 		break;
 	case DP_AUX_F:
-		aux_ch = AUX_CH_F;
+		if (DISPLAY_VER(i915) == 13)
+			aux_ch = AUX_CH_USBC1;
+		else
+			aux_ch = AUX_CH_F;
 		break;
 	case DP_AUX_G:
-		aux_ch = AUX_CH_G;
+		if (DISPLAY_VER(i915) == 13)
+			aux_ch = AUX_CH_USBC2;
+		else
+			aux_ch = AUX_CH_G;
 		break;
 	case DP_AUX_H:
-		aux_ch = AUX_CH_H;
+		if (DISPLAY_VER(i915) == 13)
+			aux_ch = AUX_CH_USBC3;
+		else
+			aux_ch = AUX_CH_H;
 		break;
 	case DP_AUX_I:
-		aux_ch = AUX_CH_I;
+		if (DISPLAY_VER(i915) == 13)
+			aux_ch = AUX_CH_USBC4;
+		else
+			aux_ch = AUX_CH_I;
 		break;
 	default:
 		MISSING_CASE(info->alternate_aux_channel);
