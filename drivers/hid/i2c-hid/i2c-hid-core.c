@@ -35,6 +35,8 @@
 #include <linux/kernel.h>
 #include <linux/hid.h>
 #include <linux/mutex.h>
+#include <linux/regulator/consumer.h>
+#include <linux/dmi.h>
 
 #include "../hid-ids.h"
 #include "i2c-hid.h"
@@ -45,7 +47,6 @@
 #define I2C_HID_QUIRK_BOGUS_IRQ			BIT(4)
 #define I2C_HID_QUIRK_RESET_ON_RESUME		BIT(5)
 #define I2C_HID_QUIRK_BAD_INPUT_SIZE		BIT(6)
-#define I2C_HID_QUIRK_NO_WAKEUP_AFTER_RESET	BIT(7)
 
 
 /* flags */
@@ -59,6 +60,25 @@
 #define EVE_TP_I2C_ADDR	0x49
 #define EVE_TP_RETRIES	10
 #define EVE_TP_DELAY_MS 1
+
+static const struct dmi_system_id devices[] = 
+	{
+		{
+			.ident = "Microsoft Surface 3",
+			.matches = {
+				DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
+				DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "Surface 3"),
+			},
+		},
+		{
+			.ident = "Microsoft Surface Pro 4",
+			.matches = {
+				DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
+				DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "Surface Pro 4"),
+			},
+		},
+		{}
+	};
 
 /* debug option */
 static bool debug;
@@ -159,7 +179,7 @@ struct i2c_hid {
 	bool			irq_wake_enabled;
 	struct mutex		reset_lock;
 
-	struct i2chid_ops	*ops;
+	struct i2chid_subclass_data *subclass;
 };
 
 static const struct i2c_hid_quirks {
@@ -183,11 +203,6 @@ static const struct i2c_hid_quirks {
 		 I2C_HID_QUIRK_RESET_ON_RESUME },
 	{ USB_VENDOR_ID_ITE, I2C_DEVICE_ID_ITE_LENOVO_LEGION_Y720,
 		I2C_HID_QUIRK_BAD_INPUT_SIZE },
-	/*
-	 * Sending the wakeup after reset actually break ELAN touchscreen controller
-	 */
-	{ USB_VENDOR_ID_ELAN, HID_ANY_ID,
-		 I2C_HID_QUIRK_NO_WAKEUP_AFTER_RESET },
 	{ 0, 0 }
 };
 
@@ -406,6 +421,9 @@ static int i2c_hid_set_power(struct i2c_client *client, int power_state)
 
 	i2c_hid_dbg(ihid, "%s\n", __func__);
 
+	if (dmi_check_system(devices) && (!strncmp(client->name, "MSHW0030", 8) || !strncmp(client->name, "MSHW0102", 8)))
+		return 0;
+
 	/*
 	 * Some devices require to send a command to wakeup before power on.
 	 * The call will get a return value (EREMOTEIO) but device will be
@@ -471,8 +489,7 @@ static int i2c_hid_hwreset(struct i2c_client *client)
 	}
 
 	/* At least some SIS devices need this after reset */
-	if (!(ihid->quirks & I2C_HID_QUIRK_NO_WAKEUP_AFTER_RESET))
-		ret = i2c_hid_set_power(client, I2C_HID_PWR_ON);
+	ret = i2c_hid_set_power(client, I2C_HID_PWR_ON);
 
 out_unlock:
 	mutex_unlock(&ihid->reset_lock);
@@ -894,29 +911,22 @@ static int i2c_hid_fetch_hid_descriptor(struct i2c_hid *ihid)
 
 static int i2c_hid_core_power_up(struct i2c_hid *ihid)
 {
-	if (!ihid->ops->power_up)
+	if (!ihid->subclass->power_up_device)
 		return 0;
 
-	return ihid->ops->power_up(ihid->ops);
+	return ihid->subclass->power_up_device(ihid->subclass);
 }
 
 static void i2c_hid_core_power_down(struct i2c_hid *ihid)
 {
-	if (!ihid->ops->power_down)
+	if (!ihid->subclass->power_down_device)
 		return;
 
-	ihid->ops->power_down(ihid->ops);
+	ihid->subclass->power_down_device(ihid->subclass);
 }
 
-static void i2c_hid_core_shutdown_tail(struct i2c_hid *ihid)
-{
-	if (!ihid->ops->shutdown_tail)
-		return;
-
-	ihid->ops->shutdown_tail(ihid->ops);
-}
-
-int i2c_hid_core_probe(struct i2c_client *client, struct i2chid_ops *ops,
+int i2c_hid_core_probe(struct i2c_client *client,
+		       struct i2chid_subclass_data *subclass,
 		       u16 hid_descriptor_address)
 {
 	int ret, retries = 0;
@@ -942,7 +952,7 @@ int i2c_hid_core_probe(struct i2c_client *client, struct i2chid_ops *ops,
 	if (!ihid)
 		return -ENOMEM;
 
-	ihid->ops = ops;
+	ihid->subclass = subclass;
 
 	ret = i2c_hid_core_power_up(ihid);
 	if (ret)
@@ -989,11 +999,8 @@ int i2c_hid_core_probe(struct i2c_client *client, struct i2chid_ops *ops,
 	}
 
 	ret = i2c_hid_fetch_hid_descriptor(ihid);
-	if (ret < 0) {
-		dev_err(&client->dev,
-			"Failed to fetch the HID Descriptor\n");
+	if (ret < 0)
 		goto err_powered;
-	}
 
 	ret = i2c_hid_init_irq(client);
 	if (ret < 0)
@@ -1068,13 +1075,11 @@ void i2c_hid_core_shutdown(struct i2c_client *client)
 
 	i2c_hid_set_power(client, I2C_HID_PWR_SLEEP);
 	free_irq(client->irq, ihid);
-
-	i2c_hid_core_shutdown_tail(ihid);
 }
 EXPORT_SYMBOL_GPL(i2c_hid_core_shutdown);
 
 #ifdef CONFIG_PM_SLEEP
-static int i2c_hid_core_suspend(struct device *dev)
+int i2c_hid_core_suspend(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct i2c_hid *ihid = i2c_get_clientdata(client);
@@ -1106,8 +1111,9 @@ static int i2c_hid_core_suspend(struct device *dev)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(i2c_hid_core_suspend);
 
-static int i2c_hid_core_resume(struct device *dev)
+int i2c_hid_core_resume(struct device *dev)
 {
 	int ret;
 	struct i2c_client *client = to_i2c_client(dev);
@@ -1151,12 +1157,8 @@ static int i2c_hid_core_resume(struct device *dev)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(i2c_hid_core_resume);
 #endif
-
-const struct dev_pm_ops i2c_hid_core_pm = {
-	SET_SYSTEM_SLEEP_PM_OPS(i2c_hid_core_suspend, i2c_hid_core_resume)
-};
-EXPORT_SYMBOL_GPL(i2c_hid_core_pm);
 
 MODULE_DESCRIPTION("HID over I2C core driver");
 MODULE_AUTHOR("Benjamin Tissoires <benjamin.tissoires@gmail.com>");

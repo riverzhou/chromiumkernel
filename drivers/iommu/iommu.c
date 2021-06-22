@@ -1963,16 +1963,6 @@ out_unlock:
 }
 EXPORT_SYMBOL_GPL(iommu_attach_device);
 
-int iommu_deferred_attach(struct device *dev, struct iommu_domain *domain)
-{
-	const struct iommu_ops *ops = domain->ops;
-
-	if (ops->is_attach_deferred && ops->is_attach_deferred(domain, dev))
-		return __iommu_attach_device(domain, dev);
-
-	return 0;
-}
-
 /*
  * Check flags and other user provided data for valid combinations. We also
  * make sure no reserved fields or unused flags are set. This is to ensure
@@ -2436,7 +2426,7 @@ static int _iommu_map(struct iommu_domain *domain, unsigned long iova,
 
 	ret = __iommu_map(domain, iova, paddr, size, prot, gfp);
 	if (ret == 0 && ops->iotlb_sync_map)
-		ops->iotlb_sync_map(domain, iova, size);
+		ops->iotlb_sync_map(domain);
 
 	return ret;
 }
@@ -2568,7 +2558,7 @@ static size_t __iommu_map_sg(struct iommu_domain *domain, unsigned long iova,
 	}
 
 	if (ops->iotlb_sync_map)
-		ops->iotlb_sync_map(domain, iova, mapped);
+		ops->iotlb_sync_map(domain);
 	return mapped;
 
 out_err:

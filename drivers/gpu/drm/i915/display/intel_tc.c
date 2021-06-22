@@ -28,7 +28,7 @@ tc_cold_get_power_domain(struct intel_digital_port *dig_port)
 {
 	struct drm_i915_private *i915 = to_i915(dig_port->base.base.dev);
 
-	if (DISPLAY_VER(i915) == 11)
+	if (INTEL_GEN(i915) == 11)
 		return intel_legacy_aux_to_power_domain(dig_port->aux_ch);
 	else
 		return POWER_DOMAIN_TC_COLD_OFF;
@@ -40,7 +40,7 @@ tc_cold_block(struct intel_digital_port *dig_port)
 	struct drm_i915_private *i915 = to_i915(dig_port->base.base.dev);
 	enum intel_display_power_domain domain;
 
-	if (DISPLAY_VER(i915) == 11 && !dig_port->tc_legacy_port)
+	if (INTEL_GEN(i915) == 11 && !dig_port->tc_legacy_port)
 		return 0;
 
 	domain = tc_cold_get_power_domain(dig_port);
@@ -71,7 +71,7 @@ assert_tc_cold_blocked(struct intel_digital_port *dig_port)
 	struct drm_i915_private *i915 = to_i915(dig_port->base.base.dev);
 	bool enabled;
 
-	if (DISPLAY_VER(i915) == 11 && !dig_port->tc_legacy_port)
+	if (INTEL_GEN(i915) == 11 && !dig_port->tc_legacy_port)
 		return;
 
 	enabled = intel_display_power_is_enabled(i915,
@@ -198,9 +198,9 @@ static void tc_port_fixup_legacy_flag(struct intel_digital_port *dig_port,
 		return;
 
 	/* If live status mismatches the VBT flag, trust the live status. */
-	drm_dbg_kms(&i915->drm,
-		    "Port %s: live status %08x mismatches the legacy port flag %08x, fixing flag\n",
-		    dig_port->tc_port_name, live_status_mask, valid_hpd_mask);
+	drm_err(&i915->drm,
+		"Port %s: live status %08x mismatches the legacy port flag, fix flag\n",
+		dig_port->tc_port_name, live_status_mask);
 
 	dig_port->tc_legacy_port = !dig_port->tc_legacy_port;
 }
@@ -232,7 +232,7 @@ static u32 tc_port_live_status_mask(struct intel_digital_port *dig_port)
 		mask |= BIT(TC_PORT_LEGACY);
 
 	/* The sink can be connected only in a single mode. */
-	if (!drm_WARN_ON_ONCE(&i915->drm, hweight32(mask) > 1))
+	if (!drm_WARN_ON(&i915->drm, hweight32(mask) > 1))
 		tc_port_fixup_legacy_flag(dig_port, mask);
 
 	return mask;
@@ -267,8 +267,8 @@ static bool icl_tc_phy_set_safe_mode(struct intel_digital_port *dig_port,
 				PORT_TX_DFLEXDPCSSS(dig_port->tc_phy_fia));
 	if (val == 0xffffffff) {
 		drm_dbg_kms(&i915->drm,
-			    "Port %s: PHY in TCCOLD, can't %s safe-mode\n",
-			    dig_port->tc_port_name, enabledisable(enable));
+			    "Port %s: PHY in TCCOLD, can't set safe-mode to %s\n",
+			    dig_port->tc_port_name, enableddisabled(enable));
 
 		return false;
 	}
@@ -455,7 +455,7 @@ static void intel_tc_port_reset_mode(struct intel_digital_port *dig_port,
 	enum tc_port_mode old_tc_mode = dig_port->tc_mode;
 
 	intel_display_power_flush_work(i915);
-	if (DISPLAY_VER(i915) != 11 || !dig_port->tc_legacy_port) {
+	if (INTEL_GEN(i915) != 11 || !dig_port->tc_legacy_port) {
 		enum intel_display_power_domain aux_domain;
 		bool aux_powered;
 
@@ -659,7 +659,7 @@ void intel_tc_port_init(struct intel_digital_port *dig_port, bool is_legacy)
 	enum port port = dig_port->base.port;
 	enum tc_port tc_port = intel_port_to_tc(i915, port);
 
-	if (drm_WARN_ON(&i915->drm, tc_port == TC_PORT_NONE))
+	if (drm_WARN_ON(&i915->drm, tc_port == PORT_TC_NONE))
 		return;
 
 	snprintf(dig_port->tc_port_name, sizeof(dig_port->tc_port_name),

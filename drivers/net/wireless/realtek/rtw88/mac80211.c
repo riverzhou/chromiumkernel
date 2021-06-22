@@ -42,7 +42,7 @@ static void rtw_ops_wake_tx_queue(struct ieee80211_hw *hw,
 		list_add_tail(&rtwtxq->list, &rtwdev->txqs);
 	spin_unlock_bh(&rtwdev->txq_lock);
 
-	queue_work(rtwdev->tx_wq, &rtwdev->tx_work);
+	tasklet_schedule(&rtwdev->tx_tasklet);
 }
 
 static int rtw_ops_start(struct ieee80211_hw *hw)
@@ -351,8 +351,6 @@ static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
 {
 	struct rtw_dev *rtwdev = hw->priv;
 	struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
-	struct rtw_coex *coex = &rtwdev->coex;
-	struct rtw_coex_stat *coex_stat = &coex->stat;
 	u32 config = 0;
 
 	mutex_lock(&rtwdev->mutex);
@@ -381,11 +379,6 @@ static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
 	if (changed & BSS_CHANGED_BSSID) {
 		ether_addr_copy(rtwvif->bssid, conf->bssid);
 		config |= PORT_SET_BSSID;
-	}
-
-	if (changed & BSS_CHANGED_BEACON_INT) {
-		if (ieee80211_vif_type_p2p(vif) == NL80211_IFTYPE_STATION)
-			coex_stat->wl_beacon_interval = conf->beacon_int;
 	}
 
 	if (changed & BSS_CHANGED_BEACON)
@@ -520,7 +513,6 @@ static int rtw_ops_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 				  hw_key_type, hw_key_idx);
 		break;
 	case DISABLE_KEY:
-		rtw_hci_flush_all_queues(rtwdev, false);
 		rtw_mac_flush_all_queues(rtwdev, false);
 		rtw_sec_clear_cam(rtwdev, sec, key->hw_key_idx);
 		break;
@@ -671,7 +663,6 @@ static void rtw_ops_flush(struct ieee80211_hw *hw,
 	mutex_lock(&rtwdev->mutex);
 	rtw_leave_lps_deep(rtwdev);
 
-	rtw_hci_flush_queues(rtwdev, queues, drop);
 	rtw_mac_flush_queues(rtwdev, queues, drop);
 	mutex_unlock(&rtwdev->mutex);
 }

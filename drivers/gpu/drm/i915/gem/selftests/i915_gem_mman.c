@@ -7,7 +7,6 @@
 #include <linux/prime_numbers.h>
 
 #include "gt/intel_engine_pm.h"
-#include "gt/intel_gpu_commands.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
 #include "gem/i915_gem_region.h"
@@ -322,7 +321,7 @@ static int igt_partial_tiling(void *arg)
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
 
-	err = i915_gem_object_pin_pages_unlocked(obj);
+	err = i915_gem_object_pin_pages(obj);
 	if (err) {
 		pr_err("Failed to allocate %u pages (%lu total), err=%d\n",
 		       nreal, obj->base.size / PAGE_SIZE, err);
@@ -459,7 +458,7 @@ static int igt_smoke_tiling(void *arg)
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
 
-	err = i915_gem_object_pin_pages_unlocked(obj);
+	err = i915_gem_object_pin_pages(obj);
 	if (err) {
 		pr_err("Failed to allocate %u pages (%lu total), err=%d\n",
 		       nreal, obj->base.size / PAGE_SIZE, err);
@@ -798,7 +797,7 @@ static int wc_set(struct drm_i915_gem_object *obj)
 {
 	void *vaddr;
 
-	vaddr = i915_gem_object_pin_map_unlocked(obj, I915_MAP_WC);
+	vaddr = i915_gem_object_pin_map(obj, I915_MAP_WC);
 	if (IS_ERR(vaddr))
 		return PTR_ERR(vaddr);
 
@@ -814,7 +813,7 @@ static int wc_check(struct drm_i915_gem_object *obj)
 	void *vaddr;
 	int err = 0;
 
-	vaddr = i915_gem_object_pin_map_unlocked(obj, I915_MAP_WC);
+	vaddr = i915_gem_object_pin_map(obj, I915_MAP_WC);
 	if (IS_ERR(vaddr))
 		return PTR_ERR(vaddr);
 
@@ -835,8 +834,9 @@ static bool can_mmap(struct drm_i915_gem_object *obj, enum i915_mmap_type type)
 		return false;
 
 	if (type != I915_MMAP_TYPE_GTT &&
-	    !i915_gem_object_has_struct_page(obj) &&
-	    !i915_gem_object_type_has(obj, I915_GEM_OBJECT_HAS_IOMEM))
+	    !i915_gem_object_type_has(obj,
+				      I915_GEM_OBJECT_HAS_STRUCT_PAGE |
+				      I915_GEM_OBJECT_HAS_IOMEM))
 		return false;
 
 	return true;
@@ -976,8 +976,10 @@ static const char *repr_mmap_type(enum i915_mmap_type type)
 
 static bool can_access(const struct drm_i915_gem_object *obj)
 {
-	return i915_gem_object_has_struct_page(obj) ||
-	       i915_gem_object_type_has(obj, I915_GEM_OBJECT_HAS_IOMEM);
+	unsigned int flags =
+		I915_GEM_OBJECT_HAS_STRUCT_PAGE | I915_GEM_OBJECT_HAS_IOMEM;
+
+	return i915_gem_object_type_has(obj, flags);
 }
 
 static int __igt_mmap_access(struct drm_i915_private *i915,
@@ -1316,9 +1318,7 @@ static int __igt_mmap_revoke(struct drm_i915_private *i915,
 	}
 
 	if (type != I915_MMAP_TYPE_GTT) {
-		i915_gem_object_lock(obj, NULL);
 		__i915_gem_object_put_pages(obj);
-		i915_gem_object_unlock(obj);
 		if (i915_gem_object_has_pages(obj)) {
 			pr_err("Failed to put-pages object!\n");
 			err = -EINVAL;

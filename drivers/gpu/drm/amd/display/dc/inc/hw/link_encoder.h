@@ -90,8 +90,7 @@ union psr_error_status {
 	struct {
 		unsigned char LINK_CRC_ERROR        :1;
 		unsigned char RFB_STORAGE_ERROR     :1;
-		unsigned char VSC_SDP_ERROR         :1;
-		unsigned char RESERVED              :5;
+		unsigned char RESERVED              :6;
 	} bits;
 	unsigned char raw;
 };
@@ -185,19 +184,6 @@ struct link_encoder_funcs {
 
 	enum signal_type (*get_dig_mode)(
 		struct link_encoder *enc);
-};
-
-/*
- * Used to track assignments of links (display endpoints) to link encoders.
- *
- * Entry in link_enc_assignments table in struct resource_context.
- * Entries only marked valid once encoder assigned to a link and invalidated once unassigned.
- * Uses engine ID as identifier since PHY ID not relevant for USB4 DPIA endpoint.
- */
-struct link_enc_assignment {
-	bool valid;
-	struct display_endpoint_id ep_id;
-	enum engine_id eng_id;
 };
 
 #endif /* LINK_ENCODER_H_ */

@@ -3138,7 +3138,7 @@ static void CalculateFlipSchedule(
 				4.0 * (TimeForFetchingMetaPTEImmediateFlip / LineTime + 0.125),
 				1) / 4.0;
 
-		if ((GPUVMEnable || DCCEnable)) {
+		if ((GPUVMEnable == true || DCCEnable == true)) {
 			mode_lib->vba.ImmediateFlipBW[0] = BandwidthAvailableForImmediateFlip
 					* ImmediateFlipBytes / TotImmediateFlipBytes;
 			TimeForFetchingRowInVBlankImmediateFlip = dml_max(
@@ -4169,11 +4169,10 @@ void dml20_ModeSupportAndSystemConfigurationFull(struct display_mode_lib *mode_l
 	for (i = 0; i <= mode_lib->vba.soc.num_states; i++) {
 		locals->DIOSupport[i] = true;
 		for (k = 0; k <= mode_lib->vba.NumberOfActivePlanes - 1; k++) {
-			if (!mode_lib->vba.skip_dio_check[k]
-					&& (locals->OutputBppPerState[i][k] == BPP_INVALID
-						|| (mode_lib->vba.OutputFormat[k] == dm_420
+			if (locals->OutputBppPerState[i][k] == BPP_INVALID
+					|| (mode_lib->vba.OutputFormat[k] == dm_420
 							&& mode_lib->vba.Interlace[k] == true
-							&& mode_lib->vba.ProgressiveToInterlaceUnitInOPP == true))) {
+							&& mode_lib->vba.ProgressiveToInterlaceUnitInOPP == true)) {
 				locals->DIOSupport[i] = false;
 			}
 		}

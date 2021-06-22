@@ -45,60 +45,60 @@ static const struct cedrus_control cedrus_controls[] = {
 	},
 	{
 		.cfg = {
-			.id	= V4L2_CID_STATELESS_H264_DECODE_PARAMS,
+			.id	= V4L2_CID_MPEG_VIDEO_H264_DECODE_PARAMS,
 		},
 		.codec		= CEDRUS_CODEC_H264,
 		.required	= true,
 	},
 	{
 		.cfg = {
-			.id	= V4L2_CID_STATELESS_H264_SLICE_PARAMS,
+			.id	= V4L2_CID_MPEG_VIDEO_H264_SLICE_PARAMS,
 		},
 		.codec		= CEDRUS_CODEC_H264,
 		.required	= true,
 	},
 	{
 		.cfg = {
-			.id	= V4L2_CID_STATELESS_H264_SPS,
+			.id	= V4L2_CID_MPEG_VIDEO_H264_SPS,
 		},
 		.codec		= CEDRUS_CODEC_H264,
 		.required	= true,
 	},
 	{
 		.cfg = {
-			.id	= V4L2_CID_STATELESS_H264_PPS,
+			.id	= V4L2_CID_MPEG_VIDEO_H264_PPS,
 		},
 		.codec		= CEDRUS_CODEC_H264,
 		.required	= true,
 	},
 	{
 		.cfg = {
-			.id	= V4L2_CID_STATELESS_H264_SCALING_MATRIX,
+			.id	= V4L2_CID_MPEG_VIDEO_H264_SCALING_MATRIX,
 		},
 		.codec		= CEDRUS_CODEC_H264,
 		.required	= false,
 	},
 	{
 		.cfg = {
-			.id	= V4L2_CID_STATELESS_H264_PRED_WEIGHTS,
+			.id	= V4L2_CID_MPEG_VIDEO_H264_PRED_WEIGHTS,
 		},
 		.codec		= CEDRUS_CODEC_H264,
 		.required	= false,
 	},
 	{
 		.cfg = {
-			.id	= V4L2_CID_STATELESS_H264_DECODE_MODE,
-			.max	= V4L2_STATELESS_H264_DECODE_MODE_SLICE_BASED,
-			.def	= V4L2_STATELESS_H264_DECODE_MODE_SLICE_BASED,
+			.id	= V4L2_CID_MPEG_VIDEO_H264_DECODE_MODE,
+			.max	= V4L2_MPEG_VIDEO_H264_DECODE_MODE_SLICE_BASED,
+			.def	= V4L2_MPEG_VIDEO_H264_DECODE_MODE_SLICE_BASED,
 		},
 		.codec		= CEDRUS_CODEC_H264,
 		.required	= false,
 	},
 	{
 		.cfg = {
-			.id	= V4L2_CID_STATELESS_H264_START_CODE,
-			.max	= V4L2_STATELESS_H264_START_CODE_NONE,
-			.def	= V4L2_STATELESS_H264_START_CODE_NONE,
+			.id	= V4L2_CID_MPEG_VIDEO_H264_START_CODE,
+			.max	= V4L2_MPEG_VIDEO_H264_START_CODE_NONE,
+			.def	= V4L2_MPEG_VIDEO_H264_START_CODE_NONE,
 		},
 		.codec		= CEDRUS_CODEC_H264,
 		.required	= false,
@@ -160,13 +160,6 @@ static const struct cedrus_control cedrus_controls[] = {
 		},
 		.codec		= CEDRUS_CODEC_H265,
 		.required	= false,
-	},
-	{
-		.cfg = {
-			.id	= V4L2_CID_STATELESS_VP8_FRAME,
-		},
-		.codec		= CEDRUS_CODEC_VP8,
-		.required	= true,
 	},
 };
 
@@ -419,7 +412,6 @@ static int cedrus_probe(struct platform_device *pdev)
 	dev->dec_ops[CEDRUS_CODEC_MPEG2] = &cedrus_dec_ops_mpeg2;
 	dev->dec_ops[CEDRUS_CODEC_H264] = &cedrus_dec_ops_h264;
 	dev->dec_ops[CEDRUS_CODEC_H265] = &cedrus_dec_ops_h265;
-	dev->dec_ops[CEDRUS_CODEC_VP8] = &cedrus_dec_ops_vp8;
 
 	mutex_init(&dev->dev_mutex);
 

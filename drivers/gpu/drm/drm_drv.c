@@ -61,7 +61,7 @@ static struct idr drm_minors_idr;
  * prefer to embed struct drm_device into their own device
  * structure and call drm_dev_init() themselves.
  */
-static bool drm_core_init_complete;
+static bool drm_core_init_complete = false;
 
 static struct dentry *drm_debugfs_root;
 
@@ -284,7 +284,7 @@ void drm_minor_release(struct drm_minor *minor)
  *		struct clk *pclk;
  *	};
  *
- *	static const struct drm_driver driver_drm_driver = {
+ *	static struct drm_driver driver_drm_driver = {
  *		[...]
  *	};
  *
@@ -469,9 +469,6 @@ void drm_dev_unplug(struct drm_device *dev)
 	synchronize_srcu(&drm_unplug_srcu);
 
 	drm_dev_unregister(dev);
-
-	/* Clear all CPU mappings pointing to this device */
-	unmap_mapping_range(dev->anon_inode->i_mapping, 0, 0, 1);
 }
 EXPORT_SYMBOL(drm_dev_unplug);
 
@@ -577,7 +574,7 @@ static void drm_dev_init_release(struct drm_device *dev, void *res)
 }
 
 static int drm_dev_init(struct drm_device *dev,
-			const struct drm_driver *driver,
+			struct drm_driver *driver,
 			struct device *parent)
 {
 	int ret;
@@ -666,7 +663,7 @@ static void devm_drm_dev_init_release(void *data)
 
 static int devm_drm_dev_init(struct device *parent,
 			     struct drm_device *dev,
-			     const struct drm_driver *driver)
+			     struct drm_driver *driver)
 {
 	int ret;
 
@@ -674,12 +671,14 @@ static int devm_drm_dev_init(struct device *parent,
 	if (ret)
 		return ret;
 
-	return devm_add_action_or_reset(parent,
-					devm_drm_dev_init_release, dev);
+	ret = devm_add_action(parent, devm_drm_dev_init_release, dev);
+	if (ret)
+		devm_drm_dev_init_release(dev);
+
+	return ret;
 }
 
-void *__devm_drm_dev_alloc(struct device *parent,
-			   const struct drm_driver *driver,
+void *__devm_drm_dev_alloc(struct device *parent, struct drm_driver *driver,
 			   size_t size, size_t offset)
 {
 	void *container;
@@ -714,7 +713,7 @@ EXPORT_SYMBOL(__devm_drm_dev_alloc);
  * RETURNS:
  * Pointer to new DRM device, or ERR_PTR on failure.
  */
-struct drm_device *drm_dev_alloc(const struct drm_driver *driver,
+struct drm_device *drm_dev_alloc(struct drm_driver *driver,
 				 struct device *parent)
 {
 	struct drm_device *dev;
@@ -859,7 +858,7 @@ static void remove_compat_control_link(struct drm_device *dev)
  */
 int drm_dev_register(struct drm_device *dev, unsigned long flags)
 {
-	const struct drm_driver *driver = dev->driver;
+	struct drm_driver *driver = dev->driver;
 	int ret;
 
 	if (!driver->load)
@@ -892,6 +891,8 @@ int drm_dev_register(struct drm_device *dev, unsigned long flags)
 
 	if (drm_core_check_feature(dev, DRIVER_MODESET))
 		drm_modeset_register_all(dev);
+
+	ret = 0;
 
 	DRM_INFO("Initialized %s %d.%d.%d %s for %s on minor %d\n",
 		 driver->name, driver->major, driver->minor,

@@ -50,7 +50,7 @@ static struct intel_vgpu_type *intel_gvt_find_vgpu_type(struct intel_gvt *gvt,
 		const char *name)
 {
 	const char *driver_name =
-		dev_driver_string(gvt->gt->i915->drm.dev);
+		dev_driver_string(&gvt->gt->i915->drm.pdev->dev);
 	int i;
 
 	name += strlen(driver_name) + 1;
@@ -189,7 +189,7 @@ static const struct intel_gvt_ops intel_gvt_ops = {
 static void init_device_info(struct intel_gvt *gvt)
 {
 	struct intel_gvt_device_info *info = &gvt->device_info;
-	struct pci_dev *pdev = to_pci_dev(gvt->gt->i915->drm.dev);
+	struct pci_dev *pdev = gvt->gt->i915->drm.pdev;
 
 	info->max_support_vgpus = 8;
 	info->cfg_space_size = PCI_CFG_SPACE_EXP_SIZE;
@@ -201,22 +201,6 @@ static void init_device_info(struct intel_gvt *gvt)
 	info->gmadr_bytes_in_cmd = 8;
 	info->max_surface_size = 36 * 1024 * 1024;
 	info->msi_cap_offset = pdev->msi_cap;
-}
-
-static void intel_gvt_test_and_emulate_vblank(struct intel_gvt *gvt)
-{
-	struct intel_vgpu *vgpu;
-	int id;
-
-	mutex_lock(&gvt->lock);
-	idr_for_each_entry((&(gvt)->vgpu_idr), (vgpu), (id)) {
-		if (test_and_clear_bit(INTEL_GVT_REQUEST_EMULATE_VBLANK + id,
-				       (void *)&gvt->service_request)) {
-			if (vgpu->active)
-				intel_vgpu_emulate_vblank(vgpu);
-		}
-	}
-	mutex_unlock(&gvt->lock);
 }
 
 static int gvt_service_thread(void *data)
@@ -236,7 +220,9 @@ static int gvt_service_thread(void *data)
 		if (WARN_ONCE(ret, "service thread is waken up by signal.\n"))
 			continue;
 
-		intel_gvt_test_and_emulate_vblank(gvt);
+		if (test_and_clear_bit(INTEL_GVT_REQUEST_EMULATE_VBLANK,
+					(void *)&gvt->service_request))
+			intel_gvt_emulate_vblank(gvt);
 
 		if (test_bit(INTEL_GVT_REQUEST_SCHED,
 				(void *)&gvt->service_request) ||
@@ -292,6 +278,7 @@ void intel_gvt_clean_device(struct drm_i915_private *i915)
 	intel_gvt_clean_sched_policy(gvt);
 	intel_gvt_clean_workload_scheduler(gvt);
 	intel_gvt_clean_gtt(gvt);
+	intel_gvt_clean_irq(gvt);
 	intel_gvt_free_firmware(gvt);
 	intel_gvt_clean_mmio_info(gvt);
 	idr_destroy(&gvt->vgpu_idr);
@@ -325,7 +312,7 @@ int intel_gvt_init_device(struct drm_i915_private *i915)
 
 	gvt_dbg_core("init gvt device\n");
 
-	idr_init_base(&gvt->vgpu_idr, 1);
+	idr_init(&gvt->vgpu_idr);
 	spin_lock_init(&gvt->scheduler.mmio_context_lock);
 	mutex_init(&gvt->lock);
 	mutex_init(&gvt->sched_lock);
@@ -350,7 +337,7 @@ int intel_gvt_init_device(struct drm_i915_private *i915)
 
 	ret = intel_gvt_init_gtt(gvt);
 	if (ret)
-		goto out_free_firmware;
+		goto out_clean_irq;
 
 	ret = intel_gvt_init_workload_scheduler(gvt);
 	if (ret)
@@ -389,7 +376,7 @@ int intel_gvt_init_device(struct drm_i915_private *i915)
 	intel_gvt_debugfs_init(gvt);
 
 	gvt_dbg_core("gvt device initialization is done\n");
-	intel_gvt_host.dev = i915->drm.dev;
+	intel_gvt_host.dev = &i915->drm.pdev->dev;
 	intel_gvt_host.initialized = true;
 	return 0;
 
@@ -405,6 +392,8 @@ out_clean_workload_scheduler:
 	intel_gvt_clean_workload_scheduler(gvt);
 out_clean_gtt:
 	intel_gvt_clean_gtt(gvt);
+out_clean_irq:
+	intel_gvt_clean_irq(gvt);
 out_free_firmware:
 	intel_gvt_free_firmware(gvt);
 out_clean_mmio_info:
@@ -417,16 +406,7 @@ out_clean_idr:
 }
 
 int
-intel_gvt_pm_resume(struct intel_gvt *gvt)
-{
-	intel_gvt_restore_fence(gvt);
-	intel_gvt_restore_mmio(gvt);
-	intel_gvt_restore_ggtt(gvt);
-	return 0;
-}
-
-int
-intel_gvt_register_hypervisor(const struct intel_gvt_mpt *m)
+intel_gvt_register_hypervisor(struct intel_gvt_mpt *m)
 {
 	int ret;
 	void *gvt;

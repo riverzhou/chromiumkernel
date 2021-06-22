@@ -38,56 +38,43 @@
  * low-power state and comes back to normal.
  */
 
-#define DMC_PATH(platform, major, minor) \
-	"i915/"				 \
-	__stringify(platform) "_dmc_ver" \
-	__stringify(major) "_"		 \
-	__stringify(minor) ".bin"
-
 #define GEN12_CSR_MAX_FW_SIZE		ICL_CSR_MAX_FW_SIZE
 
-#define ADLS_CSR_PATH			DMC_PATH(adls, 2, 01)
-#define ADLS_CSR_VERSION_REQUIRED	CSR_VERSION(2, 1)
-MODULE_FIRMWARE(ADLS_CSR_PATH);
-
-#define DG1_CSR_PATH			DMC_PATH(dg1, 2, 02)
-#define DG1_CSR_VERSION_REQUIRED	CSR_VERSION(2, 2)
-MODULE_FIRMWARE(DG1_CSR_PATH);
-
-#define RKL_CSR_PATH			DMC_PATH(rkl, 2, 02)
+#define RKL_CSR_PATH			"i915/rkl_dmc_ver2_02.bin"
 #define RKL_CSR_VERSION_REQUIRED	CSR_VERSION(2, 2)
 MODULE_FIRMWARE(RKL_CSR_PATH);
 
-#define TGL_CSR_PATH			DMC_PATH(tgl, 2, 08)
+#define TGL_CSR_PATH			"i915/tgl_dmc_ver2_08.bin"
 #define TGL_CSR_VERSION_REQUIRED	CSR_VERSION(2, 8)
+#define TGL_CSR_MAX_FW_SIZE		0x6000
 MODULE_FIRMWARE(TGL_CSR_PATH);
 
-#define ICL_CSR_PATH			DMC_PATH(icl, 1, 09)
+#define ICL_CSR_PATH			"i915/icl_dmc_ver1_09.bin"
 #define ICL_CSR_VERSION_REQUIRED	CSR_VERSION(1, 9)
 #define ICL_CSR_MAX_FW_SIZE		0x6000
 MODULE_FIRMWARE(ICL_CSR_PATH);
 
-#define CNL_CSR_PATH			DMC_PATH(cnl, 1, 07)
+#define CNL_CSR_PATH			"i915/cnl_dmc_ver1_07.bin"
 #define CNL_CSR_VERSION_REQUIRED	CSR_VERSION(1, 7)
 #define CNL_CSR_MAX_FW_SIZE		GLK_CSR_MAX_FW_SIZE
 MODULE_FIRMWARE(CNL_CSR_PATH);
 
-#define GLK_CSR_PATH			DMC_PATH(glk, 1, 04)
+#define GLK_CSR_PATH			"i915/glk_dmc_ver1_04.bin"
 #define GLK_CSR_VERSION_REQUIRED	CSR_VERSION(1, 4)
 #define GLK_CSR_MAX_FW_SIZE		0x4000
 MODULE_FIRMWARE(GLK_CSR_PATH);
 
-#define KBL_CSR_PATH			DMC_PATH(kbl, 1, 04)
+#define KBL_CSR_PATH			"i915/kbl_dmc_ver1_04.bin"
 #define KBL_CSR_VERSION_REQUIRED	CSR_VERSION(1, 4)
 #define KBL_CSR_MAX_FW_SIZE		BXT_CSR_MAX_FW_SIZE
 MODULE_FIRMWARE(KBL_CSR_PATH);
 
-#define SKL_CSR_PATH			DMC_PATH(skl, 1, 27)
+#define SKL_CSR_PATH			"i915/skl_dmc_ver1_27.bin"
 #define SKL_CSR_VERSION_REQUIRED	CSR_VERSION(1, 27)
 #define SKL_CSR_MAX_FW_SIZE		BXT_CSR_MAX_FW_SIZE
 MODULE_FIRMWARE(SKL_CSR_PATH);
 
-#define BXT_CSR_PATH			DMC_PATH(bxt, 1, 07)
+#define BXT_CSR_PATH			"i915/bxt_dmc_ver1_07.bin"
 #define BXT_CSR_VERSION_REQUIRED	CSR_VERSION(1, 7)
 #define BXT_CSR_MAX_FW_SIZE		0x3000
 MODULE_FIRMWARE(BXT_CSR_PATH);
@@ -290,7 +277,7 @@ static void gen9_set_dc_state_debugmask(struct drm_i915_private *dev_priv)
 
 	mask = DC_STATE_DEBUG_MASK_MEMORY_UP;
 
-	if (IS_GEMINILAKE(dev_priv) || IS_BROXTON(dev_priv))
+	if (IS_GEN9_LP(dev_priv))
 		mask |= DC_STATE_DEBUG_MASK_CORES;
 
 	/* The below bit doesn't need to be cleared ever afterwards */
@@ -643,7 +630,6 @@ static void intel_csr_runtime_pm_put(struct drm_i915_private *dev_priv)
 
 static void csr_load_work_fn(struct work_struct *work)
 {
-	static const unsigned rootfs_timeout_ms = 60 * 1000;
 	struct drm_i915_private *dev_priv;
 	struct intel_csr *csr;
 	const struct firmware *fw = NULL;
@@ -651,14 +637,7 @@ static void csr_load_work_fn(struct work_struct *work)
 	dev_priv = container_of(work, typeof(*dev_priv), csr.work);
 	csr = &dev_priv->csr;
 
-	/* Wait until root filesystem is loaded in case the firmware
-	 * is not built-in but in /lib/firmware */
-	WARN(_wait_for(system_state == SYSTEM_RUNNING,
-		       rootfs_timeout_ms * 1000, 10 * 1000, 100 * 1000),
-	     "Timing out after waiting %dms for SYSTEM_RUNNING",
-	     rootfs_timeout_ms);
-
-	request_firmware(&fw, dev_priv->csr.fw_path, dev_priv->drm.dev);
+	request_firmware(&fw, dev_priv->csr.fw_path, &dev_priv->drm.pdev->dev);
 	parse_csr_fw(dev_priv, fw);
 
 	if (dev_priv->csr.dmc_payload) {
@@ -707,23 +686,16 @@ void intel_csr_ucode_init(struct drm_i915_private *dev_priv)
 	 */
 	intel_csr_runtime_pm_get(dev_priv);
 
-	if (IS_ALDERLAKE_S(dev_priv)) {
-		csr->fw_path = ADLS_CSR_PATH;
-		csr->required_version = ADLS_CSR_VERSION_REQUIRED;
-		csr->max_fw_size = GEN12_CSR_MAX_FW_SIZE;
-	} else if (IS_DG1(dev_priv)) {
-		csr->fw_path = DG1_CSR_PATH;
-		csr->required_version = DG1_CSR_VERSION_REQUIRED;
-		csr->max_fw_size = GEN12_CSR_MAX_FW_SIZE;
-	} else if (IS_ROCKETLAKE(dev_priv)) {
+	if (IS_ROCKETLAKE(dev_priv)) {
 		csr->fw_path = RKL_CSR_PATH;
 		csr->required_version = RKL_CSR_VERSION_REQUIRED;
 		csr->max_fw_size = GEN12_CSR_MAX_FW_SIZE;
-	} else if (DISPLAY_VER(dev_priv) >= 12) {
+	} else if (INTEL_GEN(dev_priv) >= 12) {
 		csr->fw_path = TGL_CSR_PATH;
 		csr->required_version = TGL_CSR_VERSION_REQUIRED;
+		/* Allow to load fw via parameter using the last known size */
 		csr->max_fw_size = GEN12_CSR_MAX_FW_SIZE;
-	} else if (DISPLAY_VER(dev_priv) == 11) {
+	} else if (IS_GEN(dev_priv, 11)) {
 		csr->fw_path = ICL_CSR_PATH;
 		csr->required_version = ICL_CSR_VERSION_REQUIRED;
 		csr->max_fw_size = ICL_CSR_MAX_FW_SIZE;

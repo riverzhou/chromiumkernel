@@ -5,8 +5,6 @@
 
 #include <linux/log2.h>
 
-#include "gem/i915_gem_lmem.h"
-
 #include "gen8_ppgtt.h"
 #include "i915_scatterlist.h"
 #include "i915_trace.h"
@@ -36,9 +34,6 @@ static u64 gen8_pte_encode(dma_addr_t addr,
 
 	if (unlikely(flags & PTE_READ_ONLY))
 		pte &= ~_PAGE_RW;
-
-	if (flags & PTE_LM)
-		pte |= GEN12_PPGTT_PTE_LM;
 
 	switch (level) {
 	case I915_CACHE_NONE:
@@ -114,7 +109,7 @@ static void gen8_ppgtt_notify_vgt(struct i915_ppgtt *ppgtt, bool create)
 
 #define as_pd(x) container_of((x), typeof(struct i915_page_directory), pt)
 
-static unsigned int
+static inline unsigned int
 gen8_pd_range(u64 start, u64 end, int lvl, unsigned int *idx)
 {
 	const int shift = gen8_pd_shift(lvl);
@@ -130,7 +125,7 @@ gen8_pd_range(u64 start, u64 end, int lvl, unsigned int *idx)
 		return i915_pde_index(end, shift) - *idx;
 }
 
-static bool gen8_pd_contains(u64 start, u64 end, int lvl)
+static inline bool gen8_pd_contains(u64 start, u64 end, int lvl)
 {
 	const u64 mask = ~0ull << gen8_pd_shift(lvl + 1);
 
@@ -138,7 +133,7 @@ static bool gen8_pd_contains(u64 start, u64 end, int lvl)
 	return (start ^ end) & mask && (start & ~mask) == 0;
 }
 
-static unsigned int gen8_pt_count(u64 start, u64 end)
+static inline unsigned int gen8_pt_count(u64 start, u64 end)
 {
 	GEM_BUG_ON(start >= end);
 	if ((start ^ end) >> gen8_pd_shift(1))
@@ -147,14 +142,14 @@ static unsigned int gen8_pt_count(u64 start, u64 end)
 		return end - start;
 }
 
-static unsigned int gen8_pd_top_count(const struct i915_address_space *vm)
+static inline unsigned int
+gen8_pd_top_count(const struct i915_address_space *vm)
 {
 	unsigned int shift = __gen8_pte_shift(vm->top);
-
 	return (vm->total + (1ull << shift) - 1) >> shift;
 }
 
-static struct i915_page_directory *
+static inline struct i915_page_directory *
 gen8_pdp_for_page_index(struct i915_address_space * const vm, const u64 idx)
 {
 	struct i915_ppgtt * const ppgtt = i915_vm_to_ppgtt(vm);
@@ -165,7 +160,7 @@ gen8_pdp_for_page_index(struct i915_address_space * const vm, const u64 idx)
 		return i915_pd_entry(ppgtt->pd, gen8_pd_index(idx, vm->top));
 }
 
-static struct i915_page_directory *
+static inline struct i915_page_directory *
 gen8_pdp_for_page_address(struct i915_address_space * const vm, const u64 addr)
 {
 	return gen8_pdp_for_page_index(vm, addr >> GEN8_PTE_SHIFT);
@@ -377,19 +372,19 @@ gen8_ppgtt_insert_pte(struct i915_ppgtt *ppgtt,
 	pd = i915_pd_entry(pdp, gen8_pd_index(idx, 2));
 	vaddr = kmap_atomic_px(i915_pt_entry(pd, gen8_pd_index(idx, 1)));
 	do {
-		GEM_BUG_ON(sg_dma_len(iter->sg) < I915_GTT_PAGE_SIZE);
+		GEM_BUG_ON(iter->sg->length < I915_GTT_PAGE_SIZE);
 		vaddr[gen8_pd_index(idx, 0)] = pte_encode | iter->dma;
 
 		iter->dma += I915_GTT_PAGE_SIZE;
 		if (iter->dma >= iter->max) {
 			iter->sg = __sg_next(iter->sg);
-			if (!iter->sg || sg_dma_len(iter->sg) == 0) {
+			if (!iter->sg) {
 				idx = 0;
 				break;
 			}
 
 			iter->dma = sg_dma_address(iter->sg);
-			iter->max = iter->dma + sg_dma_len(iter->sg);
+			iter->max = iter->dma + iter->sg->length;
 		}
 
 		if (gen8_pd_index(++idx, 0) == 0) {
@@ -418,8 +413,8 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 				   u32 flags)
 {
 	const gen8_pte_t pte_encode = gen8_pte_encode(0, cache_level, flags);
-	unsigned int rem = sg_dma_len(iter->sg);
 	u64 start = vma->node.start;
+	dma_addr_t rem = iter->sg->length;
 
 	GEM_BUG_ON(!i915_vm_is_4lvl(vma->vm));
 
@@ -461,7 +456,7 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 		}
 
 		do {
-			GEM_BUG_ON(sg_dma_len(iter->sg) < page_size);
+			GEM_BUG_ON(iter->sg->length < page_size);
 			vaddr[index++] = encode | iter->dma;
 
 			start += page_size;
@@ -472,10 +467,7 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 				if (!iter->sg)
 					break;
 
-				rem = sg_dma_len(iter->sg);
-				if (!rem)
-					break;
-
+				rem = iter->sg->length;
 				iter->dma = sg_dma_address(iter->sg);
 				iter->max = iter->dma + rem;
 
@@ -533,7 +525,7 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 		}
 
 		vma->page_sizes.gtt |= page_size;
-	} while (iter->sg && sg_dma_len(iter->sg));
+	} while (iter->sg);
 }
 
 static void gen8_ppgtt_insert(struct i915_address_space *vm,
@@ -563,7 +555,6 @@ static void gen8_ppgtt_insert(struct i915_address_space *vm,
 
 static int gen8_init_scratch(struct i915_address_space *vm)
 {
-	u32 pte_flags;
 	int ret;
 	int i;
 
@@ -587,13 +578,9 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 	if (ret)
 		return ret;
 
-	pte_flags = vm->has_read_only;
-	if (i915_gem_object_is_lmem(vm->scratch[0]))
-		pte_flags |= PTE_LM;
-
 	vm->scratch[0]->encode =
 		gen8_pte_encode(px_dma(vm->scratch[0]),
-				I915_CACHE_LLC, pte_flags);
+				I915_CACHE_LLC, vm->has_read_only);
 
 	for (i = 1; i <= vm->top; i++) {
 		struct drm_i915_gem_object *obj;

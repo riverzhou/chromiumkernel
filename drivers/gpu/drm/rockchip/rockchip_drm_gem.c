@@ -10,10 +10,8 @@
 
 #include <drm/drm.h>
 #include <drm/drm_gem.h>
-#include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_prime.h>
 #include <drm/drm_vma_manager.h>
-#include <drm/rockchip_drm.h>
 
 #include "rockchip_drm_drv.h"
 #include "rockchip_drm_gem.h"
@@ -297,14 +295,6 @@ static void rockchip_gem_release_object(struct rockchip_gem_object *rk_obj)
 	kfree(rk_obj);
 }
 
-static const struct drm_gem_object_funcs rockchip_gem_object_funcs = {
-	.free = rockchip_gem_free_object,
-	.get_sg_table = rockchip_gem_prime_get_sg_table,
-	.vmap = rockchip_gem_prime_vmap,
-	.vunmap	= rockchip_gem_prime_vunmap,
-	.vm_ops = &drm_gem_cma_vm_ops,
-};
-
 static struct rockchip_gem_object *
 	rockchip_gem_alloc_object(struct drm_device *drm, unsigned int size)
 {
@@ -318,8 +308,6 @@ static struct rockchip_gem_object *
 		return ERR_PTR(-ENOMEM);
 
 	obj = &rk_obj->base;
-
-	obj->funcs = &rockchip_gem_object_funcs;
 
 	drm_gem_object_init(drm, obj, size);
 
@@ -349,7 +337,7 @@ err_free_rk_obj:
 }
 
 /*
- * rockchip_gem_free_object - (struct drm_gem_object_funcs)->free
+ * rockchip_gem_free_object - (struct drm_driver)->gem_free_object_unlocked
  * callback function
  */
 void rockchip_gem_free_object(struct drm_gem_object *obj)
@@ -437,26 +425,6 @@ int rockchip_gem_dumb_create(struct drm_file *file_priv,
 	rk_obj = rockchip_gem_create_with_handle(file_priv, dev, args->size,
 						 &args->handle);
 
-	return PTR_ERR_OR_ZERO(rk_obj);
-}
-
-int rockchip_gem_map_offset_ioctl(struct drm_device *drm, void *data,
-				  struct drm_file *file_priv)
-{
-	struct drm_rockchip_gem_map_off *args = data;
-
-	return drm_gem_dumb_map_offset(file_priv, drm, args->handle,
-				       &args->offset);
-}
-
-int rockchip_gem_create_ioctl(struct drm_device *dev, void *data,
-			      struct drm_file *file_priv)
-{
-	struct drm_rockchip_gem_create *args = data;
-	struct rockchip_gem_object *rk_obj;
-
-	rk_obj = rockchip_gem_create_with_handle(file_priv, dev, args->size,
-						 &args->handle);
 	return PTR_ERR_OR_ZERO(rk_obj);
 }
 
@@ -553,32 +521,26 @@ err_free_rk_obj:
 	return ERR_PTR(ret);
 }
 
-int rockchip_gem_prime_vmap(struct drm_gem_object *obj, struct dma_buf_map *map)
+void *rockchip_gem_prime_vmap(struct drm_gem_object *obj)
 {
 	struct rockchip_gem_object *rk_obj = to_rockchip_obj(obj);
 
-	if (rk_obj->pages) {
-		void *vaddr = vmap(rk_obj->pages, rk_obj->num_pages, VM_MAP,
-				  pgprot_writecombine(PAGE_KERNEL));
-		if (!vaddr)
-			return -ENOMEM;
-		dma_buf_map_set_vaddr(map, vaddr);
-		return 0;
-	}
+	if (rk_obj->pages)
+		return vmap(rk_obj->pages, rk_obj->num_pages, VM_MAP,
+			    pgprot_writecombine(PAGE_KERNEL));
 
 	if (rk_obj->dma_attrs & DMA_ATTR_NO_KERNEL_MAPPING)
-		return -ENOMEM;
-	dma_buf_map_set_vaddr(map, rk_obj->kvaddr);
+		return NULL;
 
-	return 0;
+	return rk_obj->kvaddr;
 }
 
-void rockchip_gem_prime_vunmap(struct drm_gem_object *obj, struct dma_buf_map *map)
+void rockchip_gem_prime_vunmap(struct drm_gem_object *obj, void *vaddr)
 {
 	struct rockchip_gem_object *rk_obj = to_rockchip_obj(obj);
 
 	if (rk_obj->pages) {
-		vunmap(map->vaddr);
+		vunmap(vaddr);
 		return;
 	}
 

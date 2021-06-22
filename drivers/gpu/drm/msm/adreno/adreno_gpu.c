@@ -16,7 +16,6 @@
 #include <linux/soc/qcom/mdt_loader.h>
 #include <soc/qcom/ocmem.h>
 #include "adreno_gpu.h"
-#include "a6xx_gpu.h"
 #include "msm_gem.h"
 #include "msm_mmu.h"
 
@@ -186,14 +185,6 @@ int adreno_zap_shader_load(struct msm_gpu *gpu, u32 pasid)
 	return zap_shader_load_mdt(gpu, adreno_gpu->info->zapfw, pasid);
 }
 
-void adreno_set_llc_attributes(struct iommu_domain *iommu)
-{
-	struct io_pgtable_domain_attr pgtbl_cfg;
-
-	pgtbl_cfg.quirks = IO_PGTABLE_QUIRK_ARM_OUTER_WBWA;
-	iommu_domain_set_attr(iommu, DOMAIN_ATTR_IO_PGTABLE_CFG, &pgtbl_cfg);
-}
-
 struct msm_gem_address_space *
 adreno_iommu_create_address_space(struct msm_gpu *gpu,
 		struct platform_device *pdev)
@@ -208,10 +199,6 @@ adreno_iommu_create_address_space(struct msm_gpu *gpu,
 		return NULL;
 
 	mmu = msm_iommu_new(&pdev->dev, iommu);
-	if (IS_ERR(mmu)) {
-		iommu_domain_free(iommu);
-		return ERR_CAST(mmu);
-	}
 
 	/*
 	 * Use the aperture start or SZ_16M, whichever is greater. This will
@@ -272,9 +259,6 @@ int adreno_get_param(struct msm_gpu *gpu, uint32_t param, uint64_t *value)
 		return 0;
 	case MSM_PARAM_FAULTS:
 		*value = gpu->global_faults;
-		return 0;
-	case MSM_PARAM_SUSPENDS:
-		*value = gpu->suspend_count;
 		return 0;
 	default:
 		DBG("%s: invalid param: %u", gpu->name, param);
@@ -915,6 +899,7 @@ int adreno_gpu_init(struct drm_device *drm, struct platform_device *pdev,
 	struct adreno_platform_config *config = dev->platform_data;
 	struct msm_gpu_config adreno_gpu_config  = { 0 };
 	struct msm_gpu *gpu = &adreno_gpu->base;
+	int ret;
 
 	adreno_gpu->funcs = funcs;
 	adreno_gpu->info = adreno_info(config->rev);
@@ -933,8 +918,37 @@ int adreno_gpu_init(struct drm_device *drm, struct platform_device *pdev,
 	pm_runtime_use_autosuspend(dev);
 	pm_runtime_enable(dev);
 
-	return msm_gpu_init(drm, pdev, &adreno_gpu->base, &funcs->base,
+	ret = msm_gpu_init(drm, pdev, &adreno_gpu->base, &funcs->base,
 			adreno_gpu->info->name, &adreno_gpu_config);
+	if (ret)
+		return ret;
+
+	/*
+	 * The legacy case, before "interconnect-names", only has a
+	 * single interconnect path which is equivalent to "gfx-mem"
+	 */
+	if (!of_find_property(dev->of_node, "interconnect-names", NULL)) {
+		gpu->icc_path = of_icc_get(dev, NULL);
+	} else {
+		gpu->icc_path = of_icc_get(dev, "gfx-mem");
+		gpu->ocmem_icc_path = of_icc_get(dev, "ocmem");
+	}
+
+	if (IS_ERR(gpu->icc_path)) {
+		ret = PTR_ERR(gpu->icc_path);
+		gpu->icc_path = NULL;
+		return ret;
+	}
+
+	if (IS_ERR(gpu->ocmem_icc_path)) {
+		ret = PTR_ERR(gpu->ocmem_icc_path);
+		gpu->ocmem_icc_path = NULL;
+		/* allow -ENODATA, ocmem icc is optional */
+		if (ret != -ENODATA)
+			return ret;
+	}
+
+	return 0;
 }
 
 void adreno_gpu_cleanup(struct adreno_gpu *adreno_gpu)

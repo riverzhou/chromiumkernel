@@ -39,144 +39,69 @@
 #include <drm/drm_panel.h>
 
 /**
- * struct panel_desc - Describes a simple panel.
+ * @modes: Pointer to array of fixed modes appropriate for this panel.  If
+ *         only one mode then this can just be the address of this the mode.
+ *         NOTE: cannot be used with "timings" and also if this is specified
+ *         then you cannot override the mode in the device tree.
+ * @num_modes: Number of elements in modes array.
+ * @timings: Pointer to array of display timings.  NOTE: cannot be used with
+ *           "modes" and also these will be used to validate a device tree
+ *           override if one is present.
+ * @num_timings: Number of elements in timings array.
+ * @bpc: Bits per color.
+ * @size: Structure containing the physical size of this panel.
+ * @delay: Structure containing various delay values for this panel.
+ * @bus_format: See MEDIA_BUS_FMT_... defines.
+ * @bus_flags: See DRM_BUS_FLAG_... defines.
  */
 struct panel_desc {
-	/**
-	 * @modes: Pointer to array of fixed modes appropriate for this panel.
-	 *
-	 * If only one mode then this can just be the address of the mode.
-	 * NOTE: cannot be used with "timings" and also if this is specified
-	 * then you cannot override the mode in the device tree.
-	 */
 	const struct drm_display_mode *modes;
-
-	/** @num_modes: Number of elements in modes array. */
 	unsigned int num_modes;
-
-	/**
-	 * @timings: Pointer to array of display timings
-	 *
-	 * NOTE: cannot be used with "modes" and also these will be used to
-	 * validate a device tree override if one is present.
-	 */
 	const struct display_timing *timings;
-
-	/** @num_timings: Number of elements in timings array. */
 	unsigned int num_timings;
 
-	/** @bpc: Bits per color. */
 	unsigned int bpc;
 
-	/** @size: Structure containing the physical size of this panel. */
+	/**
+	 * @width: width (in millimeters) of the panel's active display area
+	 * @height: height (in millimeters) of the panel's active display area
+	 */
 	struct {
-		/**
-		 * @size.width: Width (in mm) of the active display area.
-		 */
 		unsigned int width;
-
-		/**
-		 * @size.height: Height (in mm) of the active display area.
-		 */
 		unsigned int height;
 	} size;
 
-	/** @delay: Structure containing various delay values for this panel. */
+	/**
+	 * @prepare: the time (in milliseconds) that it takes for the panel to
+	 *           become ready and start receiving video data
+	 * @hpd_absent_delay: Add this to the prepare delay if we know Hot
+	 *                    Plug Detect isn't used.
+	 * @enable: the time (in milliseconds) that it takes for the panel to
+	 *          display the first valid frame after starting to receive
+	 *          video data
+	 * @disable: the time (in milliseconds) that it takes for the panel to
+	 *           turn the display off (no content is visible)
+	 * @unprepare: the time (in milliseconds) that it takes for the panel
+	 *             to power itself down completely
+	 */
 	struct {
-		/**
-		 * @delay.prepare: Time for the panel to become ready.
-		 *
-		 * The time (in milliseconds) that it takes for the panel to
-		 * become ready and start receiving video data
-		 */
 		unsigned int prepare;
-
-		/**
-		 * @delay.hpd_absent_delay: Time to wait if HPD isn't hooked up.
-		 *
-		 * Add this to the prepare delay if we know Hot Plug Detect
-		 * isn't used.
-		 */
 		unsigned int hpd_absent_delay;
-
-		/**
-		 * @delay.prepare_to_enable: Time between prepare and enable.
-		 *
-		 * The minimum time, in milliseconds, that needs to have passed
-		 * between when prepare finished and enable may begin. If at
-		 * enable time less time has passed since prepare finished,
-		 * the driver waits for the remaining time.
-		 *
-		 * If a fixed enable delay is also specified, we'll start
-		 * counting before delaying for the fixed delay.
-		 *
-		 * If a fixed prepare delay is also specified, we won't start
-		 * counting until after the fixed delay. We can't overlap this
-		 * fixed delay with the min time because the fixed delay
-		 * doesn't happen at the end of the function if a HPD GPIO was
-		 * specified.
-		 *
-		 * In other words:
-		 *   prepare()
-		 *     ...
-		 *     // do fixed prepare delay
-		 *     // wait for HPD GPIO if applicable
-		 *     // start counting for prepare_to_enable
-		 *
-		 *   enable()
-		 *     // do fixed enable delay
-		 *     // enforce prepare_to_enable min time
-		 */
-		unsigned int prepare_to_enable;
-
-		/**
-		 * @delay.enable: Time for the panel to display a valid frame.
-		 *
-		 * The time (in milliseconds) that it takes for the panel to
-		 * display the first valid frame after starting to receive
-		 * video data.
-		 */
 		unsigned int enable;
-
-		/**
-		 * @delay.disable: Time for the panel to turn the display off.
-		 *
-		 * The time (in milliseconds) that it takes for the panel to
-		 * turn the display off (no content is visible).
-		 */
 		unsigned int disable;
-
-		/**
-		 * @delay.unprepare: Time to power down completely.
-		 *
-		 * The time (in milliseconds) that it takes for the panel
-		 * to power itself down completely.
-		 *
-		 * This time is used to prevent a future "prepare" from
-		 * starting until at least this many milliseconds has passed.
-		 * If at prepare time less time has passed since unprepare
-		 * finished, the driver waits for the remaining time.
-		 */
 		unsigned int unprepare;
 	} delay;
 
-	/** @bus_format: See MEDIA_BUS_FMT_... defines. */
 	u32 bus_format;
-
-	/** @bus_flags: See DRM_BUS_FLAG_... defines. */
 	u32 bus_flags;
-
-	/** @connector_type: LVDS, eDP, DSI, DPI, etc. */
 	int connector_type;
 };
 
 struct panel_simple {
 	struct drm_panel base;
+	bool prepared;
 	bool enabled;
 	bool no_hpd;
-
-	ktime_t prepared_time;
-	ktime_t unprepared_time;
 
 	const struct panel_desc *desc;
 
@@ -305,20 +230,6 @@ static int panel_simple_get_non_edid_modes(struct panel_simple *panel,
 	return num;
 }
 
-static void panel_simple_wait(ktime_t start_ktime, unsigned int min_ms)
-{
-	ktime_t now_ktime, min_ktime;
-
-	if (!min_ms)
-		return;
-
-	min_ktime = ktime_add(start_ktime, ms_to_ktime(min_ms));
-	now_ktime = ktime_get();
-
-	if (ktime_before(now_ktime, min_ktime))
-		msleep(ktime_to_ms(ktime_sub(min_ktime, now_ktime)) + 1);
-}
-
 static int panel_simple_disable(struct drm_panel *panel)
 {
 	struct panel_simple *p = to_panel_simple(panel);
@@ -338,15 +249,17 @@ static int panel_simple_unprepare(struct drm_panel *panel)
 {
 	struct panel_simple *p = to_panel_simple(panel);
 
-	if (p->prepared_time == 0)
+	if (!p->prepared)
 		return 0;
 
 	gpiod_set_value_cansleep(p->enable_gpio, 0);
 
 	regulator_disable(p->supply);
 
-	p->prepared_time = 0;
-	p->unprepared_time = ktime_get();
+	if (p->desc->delay.unprepare)
+		msleep(p->desc->delay.unprepare);
+
+	p->prepared = false;
 
 	return 0;
 }
@@ -376,18 +289,15 @@ static int panel_simple_get_hpd_gpio(struct device *dev,
 	return 0;
 }
 
-static int panel_simple_prepare_once(struct drm_panel *panel)
+static int panel_simple_prepare(struct drm_panel *panel)
 {
 	struct panel_simple *p = to_panel_simple(panel);
 	unsigned int delay;
 	int err;
 	int hpd_asserted;
-	unsigned long hpd_wait_us;
 
-	if (p->prepared_time != 0)
+	if (p->prepared)
 		return 0;
-
-	panel_simple_wait(p->unprepared_time, p->desc->delay.unprepare);
 
 	err = regulator_enable(p->supply);
 	if (err < 0) {
@@ -407,63 +317,25 @@ static int panel_simple_prepare_once(struct drm_panel *panel)
 		if (IS_ERR(p->hpd_gpio)) {
 			err = panel_simple_get_hpd_gpio(panel->dev, p, false);
 			if (err)
-				goto error;
+				return err;
 		}
-
-		if (p->desc->delay.hpd_absent_delay)
-			hpd_wait_us = p->desc->delay.hpd_absent_delay * 1000UL;
-		else
-			hpd_wait_us = 2000000;
 
 		err = readx_poll_timeout(gpiod_get_value_cansleep, p->hpd_gpio,
 					 hpd_asserted, hpd_asserted,
-					 1000, hpd_wait_us);
+					 1000, 2000000);
 		if (hpd_asserted < 0)
 			err = hpd_asserted;
 
 		if (err) {
-			if (err != -ETIMEDOUT)
-				dev_err(panel->dev,
-					"error waiting for hpd GPIO: %d\n", err);
-			goto error;
+			dev_err(panel->dev,
+				"error waiting for hpd GPIO: %d\n", err);
+			return err;
 		}
 	}
 
-	p->prepared_time = ktime_get();
+	p->prepared = true;
 
 	return 0;
-
-error:
-	gpiod_set_value_cansleep(p->enable_gpio, 0);
-	regulator_disable(p->supply);
-	p->unprepared_time = ktime_get();
-
-	return err;
-}
-
-/*
- * Some panels simply don't always come up and need to be power cycled to
- * work properly.  We'll allow for a handful of retries.
- */
-#define MAX_PANEL_PREPARE_TRIES		5
-
-static int panel_simple_prepare(struct drm_panel *panel)
-{
-	int ret;
-	int try;
-
-	for (try = 0; try < MAX_PANEL_PREPARE_TRIES; try++) {
-		ret = panel_simple_prepare_once(panel);
-		if (ret != -ETIMEDOUT)
-			break;
-	}
-
-	if (ret == -ETIMEDOUT)
-		dev_err(panel->dev, "Prepare timeout after %d tries\n", try);
-	else if (try)
-		dev_warn(panel->dev, "Prepare needed %d retries\n", try);
-
-	return ret;
 }
 
 static int panel_simple_enable(struct drm_panel *panel)
@@ -475,8 +347,6 @@ static int panel_simple_enable(struct drm_panel *panel)
 
 	if (p->desc->delay.enable)
 		msleep(p->desc->delay.enable);
-
-	panel_simple_wait(p->prepared_time, p->desc->delay.prepare_to_enable);
 
 	p->enabled = true;
 
@@ -644,7 +514,7 @@ static int panel_simple_probe(struct device *dev, const struct panel_desc *desc)
 		return -ENOMEM;
 
 	panel->enabled = false;
-	panel->prepared_time = 0;
+	panel->prepared = false;
 	panel->desc = desc;
 
 	panel->no_hpd = of_property_read_bool(dev->of_node, "no-hpd");
@@ -1446,52 +1316,6 @@ static const struct panel_desc boe_nv101wxmn51 = {
 	},
 };
 
-static const struct drm_display_mode boe_nv110wtm_n61_modes[] = {
-	{
-		.clock = 207800,
-		.hdisplay = 2160,
-		.hsync_start = 2160 + 48,
-		.hsync_end = 2160 + 48 + 32,
-		.htotal = 2160 + 48 + 32 + 100,
-		.vdisplay = 1440,
-		.vsync_start = 1440 + 3,
-		.vsync_end = 1440 + 3 + 6,
-		.vtotal = 1440 + 3 + 6 + 31,
-		.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_NVSYNC,
-	},
-	{
-		.clock = 138500,
-		.hdisplay = 2160,
-		.hsync_start = 2160 + 48,
-		.hsync_end = 2160 + 48 + 32,
-		.htotal = 2160 + 48 + 32 + 100,
-		.vdisplay = 1440,
-		.vsync_start = 1440 + 3,
-		.vsync_end = 1440 + 3 + 6,
-		.vtotal = 1440 + 3 + 6 + 31,
-		.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_NVSYNC,
-	},
-};
-
-static const struct panel_desc boe_nv110wtm_n61 = {
-	.modes = boe_nv110wtm_n61_modes,
-	.num_modes = ARRAY_SIZE(boe_nv110wtm_n61_modes),
-	.bpc = 8,
-	.size = {
-		.width = 233,
-		.height = 155,
-	},
-	.delay = {
-		.hpd_absent_delay = 200,
-		.prepare_to_enable = 80,
-		.enable = 50,
-		.unprepare = 500,
-	},
-	.bus_format = MEDIA_BUS_FMT_RGB888_1X24,
-	.bus_flags = DRM_BUS_FLAG_DATA_MSB_TO_LSB,
-	.connector_type = DRM_MODE_CONNECTOR_eDP,
-};
-
 /* Also used for boe_nv133fhm_n62 */
 static const struct drm_display_mode boe_nv133fhm_n61_modes = {
 	.clock = 147840,
@@ -1989,7 +1813,6 @@ static const struct panel_desc edt_etm0700g0dh6 = {
 	},
 	.bus_format = MEDIA_BUS_FMT_RGB666_1X18,
 	.bus_flags = DRM_BUS_FLAG_DE_HIGH | DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE,
-	.connector_type = DRM_MODE_CONNECTOR_DPI,
 };
 
 static const struct panel_desc edt_etm0700g0bdh6 = {
@@ -2408,36 +2231,6 @@ static const struct panel_desc innolux_g121x1_l03 = {
 	},
 };
 
-static const struct drm_display_mode innolux_n116bca_ea1_mode = {
-	.clock = 76420,
-	.hdisplay = 1366,
-	.hsync_start = 1366 + 136,
-	.hsync_end = 1366 + 136 + 30,
-	.htotal = 1366 + 136 + 30 + 60,
-	.vdisplay = 768,
-	.vsync_start = 768 + 8,
-	.vsync_end = 768 + 8 + 12,
-	.vtotal = 768 + 8 + 12 + 12,
-	.flags = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC,
-};
-
-static const struct panel_desc innolux_n116bca_ea1 = {
-	.modes = &innolux_n116bca_ea1_mode,
-	.num_modes = 1,
-	.bpc = 6,
-	.size = {
-		.width = 256,
-		.height = 144,
-	},
-	.delay = {
-		.hpd_absent_delay = 200,
-		.prepare_to_enable = 80,
-		.unprepare = 500,
-	},
-	.bus_format = MEDIA_BUS_FMT_RGB666_1X18,
-	.connector_type = DRM_MODE_CONNECTOR_eDP,
-};
-
 /*
  * Datasheet specifies that at 60 Hz refresh rate:
  * - total horizontal time: { 1506, 1592, 1716 }
@@ -2469,33 +2262,6 @@ static const struct panel_desc innolux_n116bge = {
 		.width = 256,
 		.height = 144,
 	},
-	.bus_format = MEDIA_BUS_FMT_RGB666_1X18,
-	.connector_type = DRM_MODE_CONNECTOR_eDP,
-};
-
-static const struct drm_display_mode innolux_n125hce_gn1_mode = {
-	.clock = 162000,
-	.hdisplay = 1920,
-	.hsync_start = 1920 + 40,
-	.hsync_end = 1920 + 40 + 40,
-	.htotal = 1920 + 40 + 40 + 80,
-	.vdisplay = 1080,
-	.vsync_start = 1080 + 4,
-	.vsync_end = 1080 + 4 + 4,
-	.vtotal = 1080 + 4 + 4 + 24,
-};
-
-static const struct panel_desc innolux_n125hce_gn1 = {
-	.modes = &innolux_n125hce_gn1_mode,
-	.num_modes = 1,
-	.bpc = 8,
-	.size = {
-		.width = 276,
-		.height = 155,
-	},
-	.bus_format = MEDIA_BUS_FMT_RGB888_1X24,
-	.bus_flags = DRM_BUS_FLAG_DATA_MSB_TO_LSB,
-	.connector_type = DRM_MODE_CONNECTOR_eDP,
 };
 
 static const struct drm_display_mode innolux_n156bge_l21_mode = {
@@ -4108,32 +3874,6 @@ static const struct panel_desc winstar_wf35ltiacd = {
 	.bus_format = MEDIA_BUS_FMT_RGB888_1X24,
 };
 
-static const struct drm_display_mode yes_optoelectronics_ytc700tlag_05_201c_mode = {
-	.clock = 51200,
-	.hdisplay = 1024,
-	.hsync_start = 1024 + 100,
-	.hsync_end = 1024 + 100 + 100,
-	.htotal = 1024 + 100 + 100 + 120,
-	.vdisplay = 600,
-	.vsync_start = 600 + 10,
-	.vsync_end = 600 + 10 + 10,
-	.vtotal = 600 + 10 + 10 + 15,
-	.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC,
-};
-
-static const struct panel_desc yes_optoelectronics_ytc700tlag_05_201c = {
-	.modes = &yes_optoelectronics_ytc700tlag_05_201c_mode,
-	.num_modes = 1,
-	.bpc = 6,
-	.size = {
-		.width = 154,
-		.height = 90,
-	},
-	.bus_flags = DRM_BUS_FLAG_DE_HIGH,
-	.bus_format = MEDIA_BUS_FMT_RGB888_1X7X4_SPWG,
-	.connector_type = DRM_MODE_CONNECTOR_LVDS,
-};
-
 static const struct drm_display_mode arm_rtsm_mode[] = {
 	{
 		.clock = 65000,
@@ -4239,9 +3979,6 @@ static const struct of_device_id platform_of_match[] = {
 	}, {
 		.compatible = "boe,nv101wxmn51",
 		.data = &boe_nv101wxmn51,
-	}, {
-		.compatible = "boe,nv110wtm-n61",
-		.data = &boe_nv110wtm_n61,
 	}, {
 		.compatible = "boe,nv133fhm-n61",
 		.data = &boe_nv133fhm_n61,
@@ -4354,14 +4091,8 @@ static const struct of_device_id platform_of_match[] = {
 		.compatible = "innolux,g121x1-l03",
 		.data = &innolux_g121x1_l03,
 	}, {
-		.compatible = "innolux,n116bca-ea1",
-		.data = &innolux_n116bca_ea1,
-	}, {
 		.compatible = "innolux,n116bge",
 		.data = &innolux_n116bge,
-	}, {
-		.compatible = "innolux,n125hce-gn1",
-		.data = &innolux_n125hce_gn1,
 	}, {
 		.compatible = "innolux,n156bge-l21",
 		.data = &innolux_n156bge_l21,
@@ -4569,9 +4300,6 @@ static const struct of_device_id platform_of_match[] = {
 	}, {
 		.compatible = "winstar,wf35ltiacd",
 		.data = &winstar_wf35ltiacd,
-	}, {
-		.compatible = "yes-optoelectronics,ytc700tlag-05-201c",
-		.data = &yes_optoelectronics_ytc700tlag_05_201c,
 	}, {
 		/* Must be the last entry */
 		.compatible = "panel-dpi",
@@ -4873,7 +4601,7 @@ static int panel_simple_dsi_probe(struct mipi_dsi_device *dsi)
 
 	err = mipi_dsi_attach(dsi);
 	if (err) {
-		struct panel_simple *panel = mipi_dsi_get_drvdata(dsi);
+		struct panel_simple *panel = dev_get_drvdata(&dsi->dev);
 
 		drm_panel_remove(&panel->base);
 	}
@@ -4917,10 +4645,8 @@ static int __init panel_simple_init(void)
 
 	if (IS_ENABLED(CONFIG_DRM_MIPI_DSI)) {
 		err = mipi_dsi_driver_register(&panel_simple_dsi_driver);
-		if (err < 0) {
-			platform_driver_unregister(&panel_simple_platform_driver);
+		if (err < 0)
 			return err;
-		}
 	}
 
 	return 0;

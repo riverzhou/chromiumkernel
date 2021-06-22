@@ -7,7 +7,6 @@
 
 #include <linux/dma-mapping.h>
 #include <linux/kthread.h>
-#include <linux/sched/mm.h>
 #include <linux/uaccess.h>
 #include <uapi/linux/sched/types.h>
 
@@ -39,7 +38,6 @@
  *           GEM object's debug name
  * - 1.5.0 - Add SUBMITQUERY_QUERY ioctl
  * - 1.6.0 - Syncobj support
- * - 1.7.0 - Add MSM_PARAM_SUSPENDS to access suspend count
  */
 #define MSM_VERSION_MAJOR	1
 #define MSM_VERSION_MINOR	6
@@ -122,8 +120,8 @@ struct clk *msm_clk_get(struct platform_device *pdev, const char *name)
 	return clk;
 }
 
-static void __iomem *_msm_ioremap(struct platform_device *pdev, const char *name,
-				  const char *dbgname, bool quiet)
+void __iomem *_msm_ioremap(struct platform_device *pdev, const char *name,
+			   const char *dbgname, bool quiet)
 {
 	struct resource *res;
 	unsigned long size;
@@ -180,14 +178,6 @@ u32 msm_readl(const void __iomem *addr)
 	if (reglog)
 		pr_err("IO:R %p %08x\n", addr, val);
 	return val;
-}
-
-void msm_rmw(void __iomem *addr, u32 mask, u32 or)
-{
-	u32 val = msm_readl(addr);
-
-	val &= ~mask;
-	msm_writel(val | or, addr);
 }
 
 struct msm_vblank_work {
@@ -403,7 +393,7 @@ static int msm_init_vram(struct drm_device *dev)
 	return ret;
 }
 
-static int msm_drm_init(struct device *dev, const struct drm_driver *drv)
+static int msm_drm_init(struct device *dev, struct drm_driver *drv)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct drm_device *ddev;
@@ -447,18 +437,10 @@ static int msm_drm_init(struct device *dev, const struct drm_driver *drv)
 
 	priv->wq = alloc_ordered_workqueue("msm", 0);
 
-	INIT_LIST_HEAD(&priv->objects);
-	mutex_init(&priv->obj_lock);
+	INIT_WORK(&priv->free_work, msm_gem_free_work);
+	init_llist_head(&priv->free_list);
 
-	INIT_LIST_HEAD(&priv->inactive_willneed);
-	INIT_LIST_HEAD(&priv->inactive_dontneed);
-	INIT_LIST_HEAD(&priv->inactive_unpinned);
-	mutex_init(&priv->mm_lock);
-
-	/* Teach lockdep about lock ordering wrt. shrinker: */
-	fs_reclaim_acquire(GFP_KERNEL);
-	might_lock(&priv->mm_lock);
-	fs_reclaim_release(GFP_KERNEL);
+	INIT_LIST_HEAD(&priv->inactive_list);
 
 	drm_mode_config_init(ddev);
 
@@ -928,9 +910,14 @@ static int msm_ioctl_gem_madvise(struct drm_device *dev, void *data,
 		return -EINVAL;
 	}
 
+	ret = mutex_lock_interruptible(&dev->struct_mutex);
+	if (ret)
+		return ret;
+
 	obj = drm_gem_object_lookup(file, args->handle);
 	if (!obj) {
-		return -ENOENT;
+		ret = -ENOENT;
+		goto unlock;
 	}
 
 	ret = msm_gem_madvise(obj, args->madv);
@@ -939,8 +926,10 @@ static int msm_ioctl_gem_madvise(struct drm_device *dev, void *data,
 		ret = 0;
 	}
 
-	drm_gem_object_put(obj);
+	drm_gem_object_put_locked(obj);
 
+unlock:
+	mutex_unlock(&dev->struct_mutex);
 	return ret;
 }
 
@@ -985,6 +974,12 @@ static const struct drm_ioctl_desc msm_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(MSM_SUBMITQUEUE_QUERY, msm_ioctl_submitqueue_query, DRM_RENDER_ALLOW),
 };
 
+static const struct vm_operations_struct vm_ops = {
+	.fault = msm_gem_fault,
+	.open = drm_gem_vm_open,
+	.close = drm_gem_vm_close,
+};
+
 static const struct file_operations fops = {
 	.owner              = THIS_MODULE,
 	.open               = drm_open,
@@ -997,7 +992,7 @@ static const struct file_operations fops = {
 	.mmap               = msm_gem_mmap,
 };
 
-static const struct drm_driver msm_driver = {
+static struct drm_driver msm_driver = {
 	.driver_features    = DRIVER_GEM |
 				DRIVER_RENDER |
 				DRIVER_ATOMIC |
@@ -1010,11 +1005,18 @@ static const struct drm_driver msm_driver = {
 	.irq_preinstall     = msm_irq_preinstall,
 	.irq_postinstall    = msm_irq_postinstall,
 	.irq_uninstall      = msm_irq_uninstall,
+	.gem_free_object_unlocked = msm_gem_free_object,
+	.gem_vm_ops         = &vm_ops,
 	.dumb_create        = msm_gem_dumb_create,
 	.dumb_map_offset    = msm_gem_dumb_map_offset,
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
+	.gem_prime_pin      = msm_gem_prime_pin,
+	.gem_prime_unpin    = msm_gem_prime_unpin,
+	.gem_prime_get_sg_table = msm_gem_prime_get_sg_table,
 	.gem_prime_import_sg_table = msm_gem_prime_import_sg_table,
+	.gem_prime_vmap     = msm_gem_prime_vmap,
+	.gem_prime_vunmap   = msm_gem_prime_vunmap,
 	.gem_prime_mmap     = msm_gem_prime_mmap,
 #ifdef CONFIG_DEBUG_FS
 	.debugfs_init       = msm_debugfs_init,
@@ -1187,11 +1189,10 @@ static int compare_name_mdp(struct device *dev, void *data)
 	return (strstr(dev_name(dev), "mdp") != NULL);
 }
 
-static int add_display_components(struct platform_device *pdev,
+static int add_display_components(struct device *dev,
 				  struct component_match **matchptr)
 {
 	struct device *mdp_dev;
-	struct device *dev = &pdev->dev;
 	int ret;
 
 	/*
@@ -1200,9 +1201,9 @@ static int add_display_components(struct platform_device *pdev,
 	 * Populate the children devices, find the MDP5/DPU node, and then add
 	 * the interfaces to our components list.
 	 */
-	switch (get_mdp_ver(pdev)) {
-	case KMS_MDP5:
-	case KMS_DPU:
+	if (of_device_is_compatible(dev->of_node, "qcom,mdss") ||
+	    of_device_is_compatible(dev->of_node, "qcom,sdm845-mdss") ||
+	    of_device_is_compatible(dev->of_node, "qcom,sc7180-mdss")) {
 		ret = of_platform_populate(dev->of_node, NULL, NULL, dev);
 		if (ret) {
 			DRM_DEV_ERROR(dev, "failed to populate children devices\n");
@@ -1221,11 +1222,9 @@ static int add_display_components(struct platform_device *pdev,
 		/* add the MDP component itself */
 		drm_of_component_match_add(dev, matchptr, compare_of,
 					   mdp_dev->of_node);
-		break;
-	case KMS_MDP4:
+	} else {
 		/* MDP4 */
 		mdp_dev = dev;
-		break;
 	}
 
 	ret = add_components_mdp(mdp_dev, matchptr);
@@ -1290,7 +1289,7 @@ static int msm_pdev_probe(struct platform_device *pdev)
 	int ret;
 
 	if (get_mdp_ver(pdev)) {
-		ret = add_display_components(pdev, &match);
+		ret = add_display_components(&pdev->dev, &match);
 		if (ret)
 			return ret;
 	}
@@ -1341,9 +1340,6 @@ static const struct of_device_id dt_match[] = {
 	{ .compatible = "qcom,mdss", .data = (void *)KMS_MDP5 },
 	{ .compatible = "qcom,sdm845-mdss", .data = (void *)KMS_DPU },
 	{ .compatible = "qcom,sc7180-mdss", .data = (void *)KMS_DPU },
-	{ .compatible = "qcom,sc7280-mdss", .data = (void *)KMS_DPU },
-	{ .compatible = "qcom,sm8150-mdss", .data = (void *)KMS_DPU },
-	{ .compatible = "qcom,sm8250-mdss", .data = (void *)KMS_DPU },
 	{}
 };
 MODULE_DEVICE_TABLE(of, dt_match);

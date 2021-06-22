@@ -282,6 +282,7 @@ struct exynos_dsi {
 	struct list_head transfer_list;
 
 	const struct exynos_dsi_driver_data *driver_data;
+	struct device_node *in_bridge_node;
 };
 
 #define host_to_dsi(host) container_of(host, struct exynos_dsi, dsi_host)
@@ -1352,9 +1353,10 @@ static int exynos_dsi_register_te_irq(struct exynos_dsi *dsi,
 	}
 
 	te_gpio_irq = gpio_to_irq(dsi->te_gpio);
+	irq_set_status_flags(te_gpio_irq, IRQ_NOAUTOEN);
 
 	ret = request_threaded_irq(te_gpio_irq, exynos_dsi_te_irq_handler, NULL,
-				   IRQF_TRIGGER_RISING | IRQF_NO_AUTOEN, "TE", dsi);
+					IRQF_TRIGGER_RISING, "TE", dsi);
 	if (ret) {
 		dev_err(dsi->dev, "request interrupt failed with %d\n", ret);
 		gpio_free(dsi->te_gpio);
@@ -1682,16 +1684,17 @@ static int exynos_dsi_parse_dt(struct exynos_dsi *dsi)
 	if (ret < 0)
 		return ret;
 
+	dsi->in_bridge_node = of_graph_get_remote_node(node, DSI_PORT_IN, 0);
+
 	return 0;
 }
 
 static int exynos_dsi_bind(struct device *dev, struct device *master,
 				void *data)
 {
-	struct exynos_dsi *dsi = dev_get_drvdata(dev);
-	struct drm_encoder *encoder = &dsi->encoder;
+	struct drm_encoder *encoder = dev_get_drvdata(dev);
+	struct exynos_dsi *dsi = encoder_to_dsi(encoder);
 	struct drm_device *drm_dev = data;
-	struct device_node *in_bridge_node;
 	struct drm_bridge *in_bridge;
 	int ret;
 
@@ -1703,12 +1706,10 @@ static int exynos_dsi_bind(struct device *dev, struct device *master,
 	if (ret < 0)
 		return ret;
 
-	in_bridge_node = of_graph_get_remote_node(dev->of_node, DSI_PORT_IN, 0);
-	if (in_bridge_node) {
-		in_bridge = of_drm_find_bridge(in_bridge_node);
+	if (dsi->in_bridge_node) {
+		in_bridge = of_drm_find_bridge(dsi->in_bridge_node);
 		if (in_bridge)
 			drm_bridge_attach(encoder, in_bridge, NULL, 0);
-		of_node_put(in_bridge_node);
 	}
 
 	return mipi_dsi_host_register(&dsi->dsi_host);
@@ -1717,8 +1718,8 @@ static int exynos_dsi_bind(struct device *dev, struct device *master,
 static void exynos_dsi_unbind(struct device *dev, struct device *master,
 				void *data)
 {
-	struct exynos_dsi *dsi = dev_get_drvdata(dev);
-	struct drm_encoder *encoder = &dsi->encoder;
+	struct drm_encoder *encoder = dev_get_drvdata(dev);
+	struct exynos_dsi *dsi = encoder_to_dsi(encoder);
 
 	exynos_dsi_disable(encoder);
 
@@ -1801,9 +1802,9 @@ static int exynos_dsi_probe(struct platform_device *pdev)
 	if (dsi->irq < 0)
 		return dsi->irq;
 
+	irq_set_status_flags(dsi->irq, IRQ_NOAUTOEN);
 	ret = devm_request_threaded_irq(dev, dsi->irq, NULL,
-					exynos_dsi_irq,
-					IRQF_ONESHOT | IRQF_NO_AUTOEN,
+					exynos_dsi_irq, IRQF_ONESHOT,
 					dev_name(dev), dsi);
 	if (ret) {
 		dev_err(dev, "failed to request dsi irq\n");
@@ -1814,7 +1815,7 @@ static int exynos_dsi_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	platform_set_drvdata(pdev, dsi);
+	platform_set_drvdata(pdev, &dsi->encoder);
 
 	pm_runtime_enable(dev);
 
@@ -1826,12 +1827,17 @@ static int exynos_dsi_probe(struct platform_device *pdev)
 
 err_disable_runtime:
 	pm_runtime_disable(dev);
+	of_node_put(dsi->in_bridge_node);
 
 	return ret;
 }
 
 static int exynos_dsi_remove(struct platform_device *pdev)
 {
+	struct exynos_dsi *dsi = platform_get_drvdata(pdev);
+
+	of_node_put(dsi->in_bridge_node);
+
 	pm_runtime_disable(&pdev->dev);
 
 	component_del(&pdev->dev, &exynos_dsi_component_ops);
@@ -1841,7 +1847,8 @@ static int exynos_dsi_remove(struct platform_device *pdev)
 
 static int __maybe_unused exynos_dsi_suspend(struct device *dev)
 {
-	struct exynos_dsi *dsi = dev_get_drvdata(dev);
+	struct drm_encoder *encoder = dev_get_drvdata(dev);
+	struct exynos_dsi *dsi = encoder_to_dsi(encoder);
 	const struct exynos_dsi_driver_data *driver_data = dsi->driver_data;
 	int ret, i;
 
@@ -1871,7 +1878,8 @@ static int __maybe_unused exynos_dsi_suspend(struct device *dev)
 
 static int __maybe_unused exynos_dsi_resume(struct device *dev)
 {
-	struct exynos_dsi *dsi = dev_get_drvdata(dev);
+	struct drm_encoder *encoder = dev_get_drvdata(dev);
+	struct exynos_dsi *dsi = encoder_to_dsi(encoder);
 	const struct exynos_dsi_driver_data *driver_data = dsi->driver_data;
 	int ret, i;
 

@@ -18,7 +18,6 @@
 #include "adreno_pm4.xml.h"
 
 extern bool snapshot_debugbus;
-extern bool allow_vram_carveout;
 
 enum {
 	ADRENO_FW_PM4 = 0,
@@ -197,24 +196,9 @@ static inline int adreno_is_a430(struct adreno_gpu *gpu)
        return gpu->revn == 430;
 }
 
-static inline int adreno_is_a508(struct adreno_gpu *gpu)
-{
-	return gpu->revn == 508;
-}
-
-static inline int adreno_is_a509(struct adreno_gpu *gpu)
-{
-	return gpu->revn == 509;
-}
-
 static inline int adreno_is_a510(struct adreno_gpu *gpu)
 {
 	return gpu->revn == 510;
-}
-
-static inline int adreno_is_a512(struct adreno_gpu *gpu)
-{
-	return gpu->revn == 512;
 }
 
 static inline int adreno_is_a530(struct adreno_gpu *gpu)
@@ -287,8 +271,6 @@ int adreno_gpu_state_put(struct msm_gpu_state *state);
 struct msm_gem_address_space *
 adreno_iommu_create_address_space(struct msm_gpu *gpu,
 		struct platform_device *pdev);
-
-void adreno_set_llc_attributes(struct iommu_domain *iommu);
 
 /*
  * For a5xx and a6xx targets load the zap shader that is used to pull the GPU

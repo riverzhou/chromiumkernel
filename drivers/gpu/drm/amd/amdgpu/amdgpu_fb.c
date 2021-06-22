@@ -207,7 +207,6 @@ static int amdgpufb_create(struct drm_fb_helper *helper,
 	int ret;
 	unsigned long tmp;
 
-	memset(&mode_cmd, 0, sizeof(mode_cmd));
 	mode_cmd.width = sizes->surface_width;
 	mode_cmd.height = sizes->surface_height;
 
@@ -232,8 +231,8 @@ static int amdgpufb_create(struct drm_fb_helper *helper,
 		goto out;
 	}
 
-	ret = amdgpu_display_gem_fb_init(adev_to_drm(adev), &rfbdev->rfb,
-					 &mode_cmd, gobj);
+	ret = amdgpu_display_framebuffer_init(adev_to_drm(adev), &rfbdev->rfb,
+					      &mode_cmd, gobj);
 	if (ret) {
 		DRM_ERROR("failed to initialize framebuffer %d\n", ret);
 		goto out;
@@ -271,7 +270,7 @@ static int amdgpufb_create(struct drm_fb_helper *helper,
 	DRM_INFO("fb depth is %d\n", fb->format->depth);
 	DRM_INFO("   pitch is %d\n", fb->pitches[0]);
 
-	vga_switcheroo_client_fb_set(adev->pdev, info);
+	vga_switcheroo_client_fb_set(adev_to_drm(adev)->pdev, info);
 	return 0;
 
 out:

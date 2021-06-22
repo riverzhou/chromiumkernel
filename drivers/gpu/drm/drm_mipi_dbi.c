@@ -203,6 +203,7 @@ int mipi_dbi_buf_copy(void *dst, struct drm_framebuffer *fb,
 	struct drm_gem_object *gem = drm_gem_fb_get_obj(fb, 0);
 	struct drm_gem_cma_object *cma_obj = to_drm_gem_cma_obj(gem);
 	struct dma_buf_attachment *import_attach = gem->import_attach;
+	struct drm_format_name_buf format_name;
 	void *src = cma_obj->vaddr;
 	int ret = 0;
 
@@ -224,8 +225,8 @@ int mipi_dbi_buf_copy(void *dst, struct drm_framebuffer *fb,
 		drm_fb_xrgb8888_to_rgb565(dst, src, fb, clip, swap);
 		break;
 	default:
-		drm_err_once(fb->dev, "Format is not supported: %p4cc\n",
-			     &fb->format->format);
+		drm_err_once(fb->dev, "Format is not supported: %s\n",
+			     drm_get_format_name(fb->format->format, &format_name));
 		return -EINVAL;
 	}
 
@@ -763,7 +764,9 @@ static int mipi_dbi_spi1e_transfer(struct mipi_dbi *dbi, int dc,
 	int i, ret;
 	u8 *dst;
 
-	DRM_DEBUG_DRIVER("dc=%d, max_chunk=%zu, transfers:\n", dc, max_chunk);
+	if (drm_debug_enabled(DRM_UT_DRIVER))
+		pr_debug("[drm:%s] dc=%d, max_chunk=%zu, transfers:\n",
+			 __func__, dc, max_chunk);
 
 	tr.speed_hz = mipi_dbi_spi_cmd_max_speed(spi, len);
 	spi_message_init_with_transfers(&m, &tr, 1);
@@ -885,7 +888,9 @@ static int mipi_dbi_spi1_transfer(struct mipi_dbi *dbi, int dc,
 	max_chunk = dbi->tx_buf9_len;
 	dst16 = dbi->tx_buf9;
 
-	DRM_DEBUG_DRIVER("dc=%d, max_chunk=%zu, transfers:\n", dc, max_chunk);
+	if (drm_debug_enabled(DRM_UT_DRIVER))
+		pr_debug("[drm:%s] dc=%d, max_chunk=%zu, transfers:\n",
+			 __func__, dc, max_chunk);
 
 	max_chunk = min(max_chunk / 2, len);
 

@@ -210,7 +210,6 @@ read the file /proc/PID/status::
   NoNewPrivs:     0
   Seccomp:        0
   Speculation_Store_Bypass:       thread vulnerable
-  SpeculationIndirectBranch:      conditional enabled
   voluntary_ctxt_switches:        0
   nonvoluntary_ctxt_switches:     1
 
@@ -293,7 +292,6 @@ It's slow but very precise.
  NoNewPrivs                  no_new_privs, like prctl(PR_GET_NO_NEW_PRIV, ...)
  Seccomp                     seccomp mode, like prctl(PR_GET_SECCOMP, ...)
  Speculation_Store_Bypass    speculative store bypass mitigation status
- SpeculationIndirectBranch   indirect branch speculation mode
  Cpus_allowed                mask of CPUs on which this process may run
  Cpus_allowed_list           Same as previous, but in "list format"
  Mems_allowed                mask of memory nodes allowed to this process
@@ -431,8 +429,6 @@ is not associated with a file:
  [stack]                    the stack of the main process
  [vdso]                     the "virtual dynamic shared object",
                             the kernel system call handler
- [anon:<name>]              an anonymous mapping that has been
-                            named by userspace
  =======                    ====================================
 
  or if empty, the mapping is anonymous.
@@ -466,7 +462,6 @@ Memory Area, or VMA) there is a series of lines such as the following::
     Locked:                0 kB
     THPeligible:           0
     VmFlags: rd ex mr mw me dw
-    Name: name from userspace
 
 The first of these lines shows the same information as is displayed for the
 mapping in /proc/PID/maps.  Following lines show the size of the mapping
@@ -558,9 +553,6 @@ be present in all further kernel releases. Things get changed, the flags may
 be vanished or the reverse -- new added. Interpretation of their meaning
 might change in future as well. So each consumer of these flags has to
 follow each specific kernel version for the exact semantic.
-
-The "Name" field will only be present on a mapping that has been named by
-userspace, and will show the name passed in by userspace.
 
 This file is only present if the CONFIG_MMU kernel configuration option is
 enabled.

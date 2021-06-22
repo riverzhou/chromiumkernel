@@ -80,9 +80,7 @@ static void uvd_v3_1_ring_set_wptr(struct amdgpu_ring *ring)
  * uvd_v3_1_ring_emit_ib - execute indirect buffer
  *
  * @ring: amdgpu_ring pointer
- * @job: iob associated with the indirect buffer
  * @ib: indirect buffer to execute
- * @flags: flags associated with the indirect buffer
  *
  * Write ring commands to execute the indirect buffer
  */
@@ -101,9 +99,7 @@ static void uvd_v3_1_ring_emit_ib(struct amdgpu_ring *ring,
  * uvd_v3_1_ring_emit_fence - emit an fence & trap command
  *
  * @ring: amdgpu_ring pointer
- * @addr: address
- * @seq: sequence number
- * @flags: fence related flags
+ * @fence: fence to emit
  *
  * Write a fence and a trap command to the ring.
  */
@@ -562,7 +558,7 @@ static int uvd_v3_1_sw_init(void *handle)
 	ring = &adev->uvd.inst->ring;
 	sprintf(ring->name, "uvd");
 	r = amdgpu_ring_init(adev, ring, 512, &adev->uvd.inst->irq, 0,
-			 AMDGPU_RING_PRIO_DEFAULT, NULL);
+			 AMDGPU_RING_PRIO_DEFAULT);
 	if (r)
 		return r;
 
@@ -623,7 +619,7 @@ static void uvd_v3_1_enable_mgcg(struct amdgpu_device *adev,
 /**
  * uvd_v3_1_hw_init - start and test UVD block
  *
- * @handle: handle used to pass amdgpu_device pointer
+ * @adev: amdgpu_device pointer
  *
  * Initialize the hardware, boot up the VCPU and do some testing
  */
@@ -690,7 +686,7 @@ done:
 /**
  * uvd_v3_1_hw_fini - stop the hardware block
  *
- * @handle: handle used to pass amdgpu_device pointer
+ * @adev: amdgpu_device pointer
  *
  * Stop the UVD block, mark ring as not ready any more
  */

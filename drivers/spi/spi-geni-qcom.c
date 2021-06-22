@@ -207,14 +207,9 @@ static void spi_geni_set_cs(struct spi_device *slv, bool set_flag)
 		goto exit;
 	}
 
-	spin_lock_irq(&mas->lock);
-	if (mas->cur_xfer) {
-		dev_err(mas->dev, "Can't set CS when prev xfer running\n");
-		spin_unlock_irq(&mas->lock);
-		goto exit;
-	}
-
 	mas->cs_flag = set_flag;
+
+	spin_lock_irq(&mas->lock);
 	reinit_completion(&mas->cs_done);
 	if (set_flag)
 		geni_se_setup_m_cmd(se, SPI_CS_ASSERT, 0);
@@ -223,10 +218,8 @@ static void spi_geni_set_cs(struct spi_device *slv, bool set_flag)
 	spin_unlock_irq(&mas->lock);
 
 	time_left = wait_for_completion_timeout(&mas->cs_done, HZ);
-	if (!time_left) {
-		dev_warn(mas->dev, "Timeout setting chip select\n");
+	if (!time_left)
 		handle_fifo_timeout(spi, NULL);
-	}
 
 exit:
 	pm_runtime_put(mas->dev);
@@ -712,7 +705,6 @@ static int spi_geni_probe(struct platform_device *pdev)
 	spi->auto_runtime_pm = true;
 	spi->handle_err = handle_fifo_timeout;
 	spi->set_cs = spi_geni_set_cs;
-	spi->use_gpio_descriptors = true;
 
 	init_completion(&mas->cs_done);
 	init_completion(&mas->cancel_done);

@@ -1308,11 +1308,14 @@ void hidinput_hid_event(struct hid_device *hid, struct hid_field *field, struct 
 
 	if (usage->hid == (HID_UP_DIGITIZER | 0x0032)) { /* InRange */
 		if (value) {
+                       if ((*quirks & HID_QUIRK_INVERT))
+                           input_event(input, usage->type, BTN_TOOL_PEN, 0);
 			input_event(input, usage->type, (*quirks & HID_QUIRK_INVERT) ? BTN_TOOL_RUBBER : usage->code, 1);
 			return;
 		}
 		input_event(input, usage->type, usage->code, 0);
 		input_event(input, usage->type, BTN_TOOL_RUBBER, 0);
+               input_event(input, usage->type, BTN_TOOL_PEN, 0);
 		return;
 	}
 
@@ -1854,16 +1857,6 @@ static struct hid_input *hidinput_match_application(struct hid_report *report)
 	list_for_each_entry(hidinput, &hid->inputs, list) {
 		if (hidinput->application == report->application)
 			return hidinput;
-
-		/*
-		 * Keep SystemControl and ConsumerControl applications together
-		 * with the main keyboard, if present.
-		 */
-		if ((report->application == HID_GD_SYSTEM_CONTROL ||
-		     report->application == HID_CP_CONSUMER_CONTROL) &&
-		    hidinput->application == HID_GD_KEYBOARD) {
-			return hidinput;
-		}
 	}
 
 	return NULL;

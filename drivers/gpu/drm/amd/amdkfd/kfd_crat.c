@@ -26,7 +26,6 @@
 #include "kfd_priv.h"
 #include "kfd_topology.h"
 #include "kfd_iommu.h"
-#include "amdgpu.h"
 #include "amdgpu_amdkfd.h"
 
 /* GPU Processor ID base for dGPUs for which VCRAT needs to be created.
@@ -142,7 +141,6 @@ static struct kfd_gpu_cache_info carrizo_cache_info[] = {
 #define renoir_cache_info carrizo_cache_info
 /* TODO - check & update Navi10 cache details */
 #define navi10_cache_info carrizo_cache_info
-#define vangogh_cache_info carrizo_cache_info
 
 static void kfd_populated_cu_info_cpu(struct kfd_topology_device *dev,
 		struct crat_subtype_computeunit *cu)
@@ -666,7 +664,6 @@ static int kfd_fill_gpu_cache_info(struct kfd_dev *kdev,
 	case CHIP_VEGA12:
 	case CHIP_VEGA20:
 	case CHIP_ARCTURUS:
-	case CHIP_ALDEBARAN:
 		pcache_info = vega10_cache_info;
 		num_of_cache_types = ARRAY_SIZE(vega10_cache_info);
 		break;
@@ -683,13 +680,8 @@ static int kfd_fill_gpu_cache_info(struct kfd_dev *kdev,
 	case CHIP_NAVI14:
 	case CHIP_SIENNA_CICHLID:
 	case CHIP_NAVY_FLOUNDER:
-	case CHIP_DIMGREY_CAVEFISH:
 		pcache_info = navi10_cache_info;
 		num_of_cache_types = ARRAY_SIZE(navi10_cache_info);
-		break;
-	case CHIP_VANGOGH:
-		pcache_info = vangogh_cache_info;
-		num_of_cache_types = ARRAY_SIZE(vangogh_cache_info);
 		break;
 	default:
 		return -EINVAL;
@@ -789,11 +781,6 @@ int kfd_create_crat_image_acpi(void **crat_image, size_t *size)
 
 	*crat_image = NULL;
 
-	if (kfd_ignore_crat()) {
-		pr_info("CRAT table disabled by module option\n");
-		return -ENODATA;
-	}
-
 	/* Fetch the CRAT table from ACPI */
 	status = acpi_get_table(CRAT_SIGNATURE, 0, &crat_table);
 	if (status == AE_NOT_FOUND) {
@@ -804,6 +791,11 @@ int kfd_create_crat_image_acpi(void **crat_image, size_t *size)
 
 		pr_err("CRAT table error: %s\n", err);
 		return -EINVAL;
+	}
+
+	if (kfd_ignore_crat()) {
+		pr_info("CRAT table disabled by module option\n");
+		return -ENODATA;
 	}
 
 	pcrat_image = kvmalloc(crat_table->length, GFP_KERNEL);
@@ -1114,8 +1106,6 @@ static int kfd_fill_gpu_direct_io_link_to_cpu(int *avail_size,
 			struct crat_subtype_iolink *sub_type_hdr,
 			uint32_t proximity_domain)
 {
-	struct amdgpu_device *adev = (struct amdgpu_device *)kdev->kgd;
-
 	*avail_size -= sizeof(struct crat_subtype_iolink);
 	if (*avail_size < 0)
 		return -ENOMEM;
@@ -1132,18 +1122,7 @@ static int kfd_fill_gpu_direct_io_link_to_cpu(int *avail_size,
 	/* Fill in IOLINK subtype.
 	 * TODO: Fill-in other fields of iolink subtype
 	 */
-	if (adev->gmc.xgmi.connected_to_cpu) {
-		/*
-		 * with host gpu xgmi link, host can access gpu memory whether
-		 * or not pcie bar type is large, so always create bidirectional
-		 * io link.
-		 */
-		sub_type_hdr->flags |= CRAT_IOLINK_FLAGS_BI_DIRECTIONAL;
-		sub_type_hdr->io_interface_type = CRAT_IOLINK_TYPE_XGMI;
-	} else {
-		sub_type_hdr->io_interface_type = CRAT_IOLINK_TYPE_PCIEXPRESS;
-	}
-
+	sub_type_hdr->io_interface_type = CRAT_IOLINK_TYPE_PCIEXPRESS;
 	sub_type_hdr->proximity_domain_from = proximity_domain;
 #ifdef CONFIG_NUMA
 	if (kdev->pdev->dev.numa_node == NUMA_NO_NODE)

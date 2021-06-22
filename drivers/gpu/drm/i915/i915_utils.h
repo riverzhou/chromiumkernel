@@ -418,11 +418,6 @@ static inline const char *onoff(bool v)
 	return v ? "on" : "off";
 }
 
-static inline const char *enabledisable(bool v)
-{
-	return v ? "enable" : "disable";
-}
-
 static inline const char *enableddisabled(bool v)
 {
 	return v ? "enabled" : "disabled";
@@ -443,14 +438,9 @@ static inline void __add_taint_for_CI(unsigned int taint)
 void cancel_timer(struct timer_list *t);
 void set_timer_ms(struct timer_list *t, unsigned long timeout);
 
-static inline bool timer_active(const struct timer_list *t)
-{
-	return READ_ONCE(t->expires);
-}
-
 static inline bool timer_expired(const struct timer_list *t)
 {
-	return timer_active(t) && !timer_pending(t);
+	return READ_ONCE(t->expires) && !timer_pending(t);
 }
 
 /*

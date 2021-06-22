@@ -160,6 +160,7 @@ static int qxl_process_single_command(struct qxl_device *qdev,
 	default:
 		DRM_DEBUG("Only draw commands in execbuffers\n");
 		return -EINVAL;
+		break;
 	}
 
 	if (cmd->command_size > PAGE_SIZE - sizeof(union qxl_release_info))
@@ -325,8 +326,8 @@ static int qxl_update_area_ioctl(struct drm_device *dev, void *data,
 	if (ret)
 		goto out;
 
-	if (!qobj->tbo.pin_count) {
-		qxl_ttm_placement_from_domain(qobj, qobj->type);
+	if (!qobj->pin_count) {
+		qxl_ttm_placement_from_domain(qobj, qobj->type, false);
 		ret = ttm_bo_validate(&qobj->tbo, &qobj->placement, &ctx);
 		if (unlikely(ret))
 			goto out;
@@ -370,14 +371,13 @@ static int qxl_clientcap_ioctl(struct drm_device *dev, void *data,
 				  struct drm_file *file_priv)
 {
 	struct qxl_device *qdev = to_qxl(dev);
-	struct pci_dev *pdev = to_pci_dev(dev->dev);
 	struct drm_qxl_clientcap *param = data;
 	int byte, idx;
 
 	byte = param->index / 8;
 	idx = param->index % 8;
 
-	if (pdev->revision < 4)
+	if (dev->pdev->revision < 4)
 		return -ENOSYS;
 
 	if (byte >= 58)

@@ -22,7 +22,6 @@ i915_gem_object_put_pages_buddy(struct drm_i915_gem_object *obj,
 int
 i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj)
 {
-	const u64 max_segment = i915_sg_segment_size();
 	struct intel_memory_region *mem = obj->mm.region;
 	struct list_head *blocks = &obj->mm.blocks;
 	resource_size_t size = obj->base.size;
@@ -38,7 +37,7 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj)
 	if (!st)
 		return -ENOMEM;
 
-	if (sg_alloc_table(st, size >> PAGE_SHIFT, GFP_KERNEL)) {
+	if (sg_alloc_table(st, size >> ilog2(mem->mm.chunk_size), GFP_KERNEL)) {
 		kfree(st);
 		return -ENOMEM;
 	}
@@ -65,30 +64,27 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj)
 				   i915_buddy_block_size(&mem->mm, block));
 		offset = i915_buddy_block_offset(block);
 
-		while (block_size) {
-			u64 len;
+		GEM_BUG_ON(overflows_type(block_size, sg->length));
 
-			if (offset != prev_end || sg->length >= max_segment) {
-				if (st->nents) {
-					sg_page_sizes |= sg->length;
-					sg = __sg_next(sg);
-				}
-
-				sg_dma_address(sg) = mem->region.start + offset;
-				sg_dma_len(sg) = 0;
-				sg->length = 0;
-				st->nents++;
+		if (offset != prev_end ||
+		    add_overflows_t(typeof(sg->length), sg->length, block_size)) {
+			if (st->nents) {
+				sg_page_sizes |= sg->length;
+				sg = __sg_next(sg);
 			}
 
-			len = min(block_size, max_segment - sg->length);
-			sg->length += len;
-			sg_dma_len(sg) += len;
+			sg_dma_address(sg) = mem->region.start + offset;
+			sg_dma_len(sg) = block_size;
 
-			offset += len;
-			block_size -= len;
+			sg->length = block_size;
 
-			prev_end = offset;
+			st->nents++;
+		} else {
+			sg->length += block_size;
+			sg_dma_len(sg) += block_size;
 		}
+
+		prev_end = offset + block_size;
 	}
 
 	sg_page_sizes |= sg->length;
@@ -106,11 +102,13 @@ err_free_sg:
 }
 
 void i915_gem_object_init_memory_region(struct drm_i915_gem_object *obj,
-					struct intel_memory_region *mem)
+					struct intel_memory_region *mem,
+					unsigned long flags)
 {
 	INIT_LIST_HEAD(&obj->mm.blocks);
 	obj->mm.region = intel_memory_region_get(mem);
 
+	obj->flags |= flags;
 	if (obj->base.size <= mem->min_page_size)
 		obj->flags |= I915_BO_ALLOC_CONTIGUOUS;
 
@@ -141,7 +139,6 @@ i915_gem_object_create_region(struct intel_memory_region *mem,
 			      unsigned int flags)
 {
 	struct drm_i915_gem_object *obj;
-	int err;
 
 	/*
 	 * NB: Our use of resource_size_t for the size stems from using struct
@@ -159,21 +156,22 @@ i915_gem_object_create_region(struct intel_memory_region *mem,
 	GEM_BUG_ON(!size);
 	GEM_BUG_ON(!IS_ALIGNED(size, I915_GTT_MIN_ALIGNMENT));
 
-	if (i915_gem_object_size_2big(size))
+	/*
+	 * XXX: There is a prevalence of the assumption that we fit the
+	 * object's page count inside a 32bit _signed_ variable. Let's document
+	 * this and catch if we ever need to fix it. In the meantime, if you do
+	 * spot such a local variable, please consider fixing!
+	 */
+
+	if (size >> PAGE_SHIFT > INT_MAX)
 		return ERR_PTR(-E2BIG);
 
-	obj = i915_gem_object_alloc();
-	if (!obj)
-		return ERR_PTR(-ENOMEM);
+	if (overflows_type(size, obj->base.size))
+		return ERR_PTR(-E2BIG);
 
-	err = mem->ops->init_object(mem, obj, size, flags);
-	if (err)
-		goto err_object_free;
+	obj = mem->ops->create_object(mem, size, flags);
+	if (!IS_ERR(obj))
+		trace_i915_gem_object_create(obj);
 
-	trace_i915_gem_object_create(obj);
 	return obj;
-
-err_object_free:
-	i915_gem_object_free(obj);
-	return ERR_PTR(err);
 }

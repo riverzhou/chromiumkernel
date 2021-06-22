@@ -30,9 +30,10 @@ __i915_printk(struct drm_i915_private *dev_priv, const char *level,
 	vaf.va = &args;
 
 	if (is_error)
-		drm_dev_printk(kdev, level, "%pV", &vaf);
+		dev_printk(level, kdev, "%pV", &vaf);
 	else
-		drm_err(&dev_priv->drm, "%pV", &vaf);
+		dev_printk(level, kdev, "[" DRM_NAME ":%ps] %pV",
+			   __builtin_return_address(0), &vaf);
 
 	va_end(args);
 
@@ -86,7 +87,7 @@ bool i915_error_injected(void)
 
 void cancel_timer(struct timer_list *t)
 {
-	if (!timer_active(t))
+	if (!READ_ONCE(t->expires))
 		return;
 
 	del_timer(t);

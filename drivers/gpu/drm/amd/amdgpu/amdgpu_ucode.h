@@ -105,9 +105,6 @@ struct psp_firmware_header_v1_3 {
 	uint32_t spl_header_version;
 	uint32_t spl_offset_bytes;
 	uint32_t spl_size_bytes;
-	uint32_t rl_header_version;
-	uint32_t rl_offset_bytes;
-	uint32_t rl_size_bytes;
 };
 
 /* version_major=1, version_minor=0 */
@@ -125,9 +122,6 @@ struct ta_firmware_header_v1_0 {
 	uint32_t ta_dtm_ucode_version;
 	uint32_t ta_dtm_offset_bytes;
 	uint32_t ta_dtm_size_bytes;
-	uint32_t ta_securedisplay_ucode_version;
-	uint32_t ta_securedisplay_offset_bytes;
-	uint32_t ta_securedisplay_size_bytes;
 };
 
 enum ta_fw_type {
@@ -138,8 +132,6 @@ enum ta_fw_type {
 	TA_FW_TYPE_PSP_HDCP,
 	TA_FW_TYPE_PSP_DTM,
 	TA_FW_TYPE_PSP_RAP,
-	TA_FW_TYPE_PSP_SECUREDISPLAY,
-	TA_FW_TYPE_MAX_INDEX,
 };
 
 struct ta_fw_bin_desc {

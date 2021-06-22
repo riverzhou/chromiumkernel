@@ -32,7 +32,9 @@
 
 #define pr_fmt(fmt) "[TTM] " fmt
 
+#include <drm/ttm/ttm_module.h>
 #include <drm/ttm/ttm_bo_driver.h>
+#include <drm/ttm/ttm_page_alloc.h>
 #include <drm/ttm/ttm_placement.h>
 #include <linux/agp_backend.h>
 #include <linux/module.h>
@@ -49,10 +51,10 @@ struct ttm_agp_backend {
 int ttm_agp_bind(struct ttm_tt *ttm, struct ttm_resource *bo_mem)
 {
 	struct ttm_agp_backend *agp_be = container_of(ttm, struct ttm_agp_backend, ttm);
-	struct page *dummy_read_page = ttm_glob.dummy_read_page;
+	struct page *dummy_read_page = ttm_bo_glob.dummy_read_page;
 	struct drm_mm_node *node = bo_mem->mm_node;
 	struct agp_memory *mem;
-	int ret, cached = ttm->caching == ttm_cached;
+	int ret, cached = (bo_mem->placement & TTM_PL_FLAG_CACHED);
 	unsigned i;
 
 	if (agp_be->mem)
@@ -134,7 +136,7 @@ struct ttm_tt *ttm_agp_tt_create(struct ttm_buffer_object *bo,
 	agp_be->mem = NULL;
 	agp_be->bridge = bridge;
 
-	if (ttm_tt_init(&agp_be->ttm, bo, page_flags, ttm_write_combined)) {
+	if (ttm_tt_init(&agp_be->ttm, bo, page_flags)) {
 		kfree(agp_be);
 		return NULL;
 	}

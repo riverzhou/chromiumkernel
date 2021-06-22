@@ -39,7 +39,6 @@ enum abm_defines {
 struct dmcu_iram_parameters {
 	unsigned int *backlight_lut_array;
 	unsigned int backlight_lut_array_size;
-	bool backlight_ramping_override;
 	unsigned int backlight_ramping_reduction;
 	unsigned int backlight_ramping_start;
 	unsigned int min_abm_backlight;

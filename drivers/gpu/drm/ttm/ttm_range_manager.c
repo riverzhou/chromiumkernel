@@ -29,6 +29,7 @@
  * Authors: Thomas Hellstrom <thellstrom-at-vmware-dot-com>
  */
 
+#include <drm/ttm/ttm_module.h>
 #include <drm/ttm/ttm_bo_driver.h>
 #include <drm/ttm/ttm_placement.h>
 #include <drm/drm_mm.h>
@@ -36,7 +37,7 @@
 #include <linux/spinlock.h>
 #include <linux/module.h>
 
-/*
+/**
  * Currently we use a spinlock for the lock, but a mutex *may* be
  * more appropriate to reduce scheduling latency if the range manager
  * ends up with very fragmented allocation patterns.
@@ -111,7 +112,7 @@ static void ttm_range_man_free(struct ttm_resource_manager *man,
 
 static const struct ttm_resource_manager_func ttm_range_manager_func;
 
-int ttm_range_man_init(struct ttm_device *bdev,
+int ttm_range_man_init(struct ttm_bo_device *bdev,
 		       unsigned type, bool use_tt,
 		       unsigned long p_size)
 {
@@ -138,7 +139,7 @@ int ttm_range_man_init(struct ttm_device *bdev,
 }
 EXPORT_SYMBOL(ttm_range_man_init);
 
-int ttm_range_man_fini(struct ttm_device *bdev,
+int ttm_range_man_fini(struct ttm_bo_device *bdev,
 		       unsigned type)
 {
 	struct ttm_resource_manager *man = ttm_manager_type(bdev, type);
@@ -148,7 +149,7 @@ int ttm_range_man_fini(struct ttm_device *bdev,
 
 	ttm_resource_manager_set_used(man, false);
 
-	ret = ttm_resource_manager_evict_all(bdev, man);
+	ret = ttm_resource_manager_force_list_clean(bdev, man);
 	if (ret)
 		return ret;
 

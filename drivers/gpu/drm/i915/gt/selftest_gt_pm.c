@@ -1,5 +1,7 @@
-// SPDX-License-Identifier: MIT
+
 /*
+ * SPDX-License-Identifier: MIT
+ *
  * Copyright © 2019 Intel Corporation
  */
 
@@ -69,7 +71,7 @@ static int live_gt_clocks(void *arg)
 	enum intel_engine_id id;
 	int err = 0;
 
-	if (!gt->clock_frequency) { /* unknown */
+	if (!RUNTIME_INFO(gt->i915)->cs_timestamp_frequency_hz) { /* unknown */
 		pr_info("CS_TIMESTAMP frequency unknown\n");
 		return 0;
 	}
@@ -110,12 +112,12 @@ static int live_gt_clocks(void *arg)
 
 		measure_clocks(engine, &cycles, &dt);
 
-		time = intel_gt_clock_interval_to_ns(engine->gt, cycles);
-		expected = intel_gt_ns_to_clock_interval(engine->gt, dt);
+		time = i915_cs_timestamp_ticks_to_ns(engine->i915, cycles);
+		expected = i915_cs_timestamp_ns_to_ticks(engine->i915, dt);
 
 		pr_info("%s: TIMESTAMP %d cycles [%lldns] in %lldns [%d cycles], using CS clock frequency of %uKHz\n",
 			engine->name, cycles, time, dt, expected,
-			engine->gt->clock_frequency / 1000);
+			RUNTIME_INFO(engine->i915)->cs_timestamp_frequency_hz / 1000);
 
 		if (9 * time < 8 * dt || 8 * time > 9 * dt) {
 			pr_err("%s: CS ticks did not match walltime!\n",

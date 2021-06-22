@@ -64,6 +64,8 @@ static void mock_device_release(struct drm_device *dev)
 	mock_device_flush(i915);
 	intel_gt_driver_remove(&i915->gt);
 
+	i915_gem_driver_release__contexts(i915);
+
 	i915_gem_drain_workqueue(i915);
 	i915_gem_drain_freed_objects(i915);
 
@@ -79,10 +81,13 @@ out:
 	i915_params_free(&i915->params);
 }
 
-static const struct drm_driver mock_driver = {
+static struct drm_driver mock_driver = {
 	.name = "mock",
 	.driver_features = DRIVER_GEM,
 	.release = mock_device_release,
+
+	.gem_close_object = i915_gem_close_object,
+	.gem_free_object_unlocked = i915_gem_free_object,
 };
 
 static void release_dev(struct device *dev)
@@ -162,7 +167,7 @@ struct drm_i915_private *mock_gem_device(void)
 	/* Using the global GTT may ask questions about KMS users, so prepare */
 	drm_mode_config_init(&i915->drm);
 
-	mkwrite_device_info(i915)->graphics_ver = -1;
+	mkwrite_device_info(i915)->gen = -1;
 
 	mkwrite_device_info(i915)->page_sizes =
 		I915_GTT_PAGE_SIZE_4K |

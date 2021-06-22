@@ -319,15 +319,6 @@ CRTC Functions Reference
 .. kernel-doc:: drivers/gpu/drm/drm_crtc.c
    :export:
 
-Color Management Functions Reference
-------------------------------------
-
-.. kernel-doc:: drivers/gpu/drm/drm_color_mgmt.c
-   :export:
-
-.. kernel-doc:: include/drm/drm_color_mgmt.h
-   :internal:
-
 Frame Buffer Abstraction
 ========================
 
@@ -378,21 +369,6 @@ Plane Functions Reference
 
 .. kernel-doc:: drivers/gpu/drm/drm_plane.c
    :export:
-
-Plane Composition Functions Reference
--------------------------------------
-
-.. kernel-doc:: drivers/gpu/drm/drm_blend.c
-   :export:
-
-Plane Damage Tracking Functions Reference
------------------------------------------
-
-.. kernel-doc:: drivers/gpu/drm/drm_damage_helper.c
-   :export:
-
-.. kernel-doc:: include/drm/drm_damage_helper.h
-   :internal:
 
 Display Modes Function Reference
 ================================
@@ -460,9 +436,6 @@ KMS Locking
 KMS Properties
 ==============
 
-This section of the documentation is primarily aimed at user-space developers.
-For the driver APIs, see the other sections.
-
 Property Types and Blob Property Support
 ----------------------------------------
 
@@ -493,29 +466,38 @@ Standard CRTC Properties
 .. kernel-doc:: drivers/gpu/drm/drm_crtc.c
    :doc: standard CRTC properties
 
-Standard Plane Properties
--------------------------
-
-.. kernel-doc:: drivers/gpu/drm/drm_plane.c
-   :doc: standard plane properties
-
 Plane Composition Properties
 ----------------------------
 
 .. kernel-doc:: drivers/gpu/drm/drm_blend.c
    :doc: overview
 
-Damage Tracking Properties
---------------------------
+.. kernel-doc:: drivers/gpu/drm/drm_blend.c
+   :export:
+
+FB_DAMAGE_CLIPS
+~~~~~~~~~~~~~~~
 
 .. kernel-doc:: drivers/gpu/drm/drm_damage_helper.c
    :doc: overview
+
+.. kernel-doc:: drivers/gpu/drm/drm_damage_helper.c
+   :export:
+
+.. kernel-doc:: include/drm/drm_damage_helper.h
+   :internal:
 
 Color Management Properties
 ---------------------------
 
 .. kernel-doc:: drivers/gpu/drm/drm_color_mgmt.c
    :doc: overview
+
+.. kernel-doc:: drivers/gpu/drm/drm_color_mgmt.c
+   :export:
+
+.. kernel-doc:: include/drm/drm_color_mgmt.h
+   :internal:
 
 Tile Group Property
 -------------------

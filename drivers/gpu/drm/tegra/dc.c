@@ -604,25 +604,23 @@ static const u64 tegra124_modifiers[] = {
 };
 
 static int tegra_plane_atomic_check(struct drm_plane *plane,
-				    struct drm_atomic_state *state)
+				    struct drm_plane_state *state)
 {
-	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state,
-										 plane);
-	struct tegra_plane_state *plane_state = to_tegra_plane_state(new_plane_state);
+	struct tegra_plane_state *plane_state = to_tegra_plane_state(state);
 	unsigned int supported_rotation = DRM_MODE_ROTATE_0 |
 					  DRM_MODE_REFLECT_X |
 					  DRM_MODE_REFLECT_Y;
-	unsigned int rotation = new_plane_state->rotation;
+	unsigned int rotation = state->rotation;
 	struct tegra_bo_tiling *tiling = &plane_state->tiling;
 	struct tegra_plane *tegra = to_tegra_plane(plane);
-	struct tegra_dc *dc = to_tegra_dc(new_plane_state->crtc);
+	struct tegra_dc *dc = to_tegra_dc(state->crtc);
 	int err;
 
 	/* no need for further checks if the plane is being disabled */
-	if (!new_plane_state->crtc)
+	if (!state->crtc)
 		return 0;
 
-	err = tegra_plane_format(new_plane_state->fb->format->format,
+	err = tegra_plane_format(state->fb->format->format,
 				 &plane_state->format,
 				 &plane_state->swap);
 	if (err < 0)
@@ -640,7 +638,7 @@ static int tegra_plane_atomic_check(struct drm_plane *plane,
 			return err;
 	}
 
-	err = tegra_fb_get_tiling(new_plane_state->fb, tiling);
+	err = tegra_fb_get_tiling(state->fb, tiling);
 	if (err < 0)
 		return err;
 
@@ -656,7 +654,7 @@ static int tegra_plane_atomic_check(struct drm_plane *plane,
 	 * property in order to achieve the same result.  The legacy BO flag
 	 * duplicates the DRM rotation property when both are set.
 	 */
-	if (tegra_fb_is_bottom_up(new_plane_state->fb))
+	if (tegra_fb_is_bottom_up(state->fb))
 		rotation |= DRM_MODE_REFLECT_Y;
 
 	rotation = drm_rotation_simplify(rotation, supported_rotation);
@@ -676,14 +674,14 @@ static int tegra_plane_atomic_check(struct drm_plane *plane,
 	 * error out if the user tries to display a framebuffer with such a
 	 * configuration.
 	 */
-	if (new_plane_state->fb->format->num_planes > 2) {
-		if (new_plane_state->fb->pitches[2] != new_plane_state->fb->pitches[1]) {
+	if (state->fb->format->num_planes > 2) {
+		if (state->fb->pitches[2] != state->fb->pitches[1]) {
 			DRM_ERROR("unsupported UV-plane configuration\n");
 			return -EINVAL;
 		}
 	}
 
-	err = tegra_plane_state_add(tegra, new_plane_state);
+	err = tegra_plane_state_add(tegra, state);
 	if (err < 0)
 		return err;
 
@@ -691,10 +689,8 @@ static int tegra_plane_atomic_check(struct drm_plane *plane,
 }
 
 static void tegra_plane_atomic_disable(struct drm_plane *plane,
-				       struct drm_atomic_state *state)
+				       struct drm_plane_state *old_state)
 {
-	struct drm_plane_state *old_state = drm_atomic_get_old_plane_state(state,
-									   plane);
 	struct tegra_plane *p = to_tegra_plane(plane);
 	u32 value;
 
@@ -708,44 +704,42 @@ static void tegra_plane_atomic_disable(struct drm_plane *plane,
 }
 
 static void tegra_plane_atomic_update(struct drm_plane *plane,
-				      struct drm_atomic_state *state)
+				      struct drm_plane_state *old_state)
 {
-	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state,
-									   plane);
-	struct tegra_plane_state *tegra_plane_state = to_tegra_plane_state(new_state);
-	struct drm_framebuffer *fb = new_state->fb;
+	struct tegra_plane_state *state = to_tegra_plane_state(plane->state);
+	struct drm_framebuffer *fb = plane->state->fb;
 	struct tegra_plane *p = to_tegra_plane(plane);
 	struct tegra_dc_window window;
 	unsigned int i;
 
 	/* rien ne va plus */
-	if (!new_state->crtc || !new_state->fb)
+	if (!plane->state->crtc || !plane->state->fb)
 		return;
 
-	if (!new_state->visible)
-		return tegra_plane_atomic_disable(plane, state);
+	if (!plane->state->visible)
+		return tegra_plane_atomic_disable(plane, old_state);
 
 	memset(&window, 0, sizeof(window));
-	window.src.x = new_state->src.x1 >> 16;
-	window.src.y = new_state->src.y1 >> 16;
-	window.src.w = drm_rect_width(&new_state->src) >> 16;
-	window.src.h = drm_rect_height(&new_state->src) >> 16;
-	window.dst.x = new_state->dst.x1;
-	window.dst.y = new_state->dst.y1;
-	window.dst.w = drm_rect_width(&new_state->dst);
-	window.dst.h = drm_rect_height(&new_state->dst);
+	window.src.x = plane->state->src.x1 >> 16;
+	window.src.y = plane->state->src.y1 >> 16;
+	window.src.w = drm_rect_width(&plane->state->src) >> 16;
+	window.src.h = drm_rect_height(&plane->state->src) >> 16;
+	window.dst.x = plane->state->dst.x1;
+	window.dst.y = plane->state->dst.y1;
+	window.dst.w = drm_rect_width(&plane->state->dst);
+	window.dst.h = drm_rect_height(&plane->state->dst);
 	window.bits_per_pixel = fb->format->cpp[0] * 8;
-	window.reflect_x = tegra_plane_state->reflect_x;
-	window.reflect_y = tegra_plane_state->reflect_y;
+	window.reflect_x = state->reflect_x;
+	window.reflect_y = state->reflect_y;
 
 	/* copy from state */
-	window.zpos = new_state->normalized_zpos;
-	window.tiling = tegra_plane_state->tiling;
-	window.format = tegra_plane_state->format;
-	window.swap = tegra_plane_state->swap;
+	window.zpos = plane->state->normalized_zpos;
+	window.tiling = state->tiling;
+	window.format = state->format;
+	window.swap = state->swap;
 
 	for (i = 0; i < fb->format->num_planes; i++) {
-		window.base[i] = tegra_plane_state->iova[i] + fb->offsets[i];
+		window.base[i] = state->iova[i] + fb->offsets[i];
 
 		/*
 		 * Tegra uses a shared stride for UV planes. Framebuffers are
@@ -837,31 +831,29 @@ static const u32 tegra_cursor_plane_formats[] = {
 };
 
 static int tegra_cursor_atomic_check(struct drm_plane *plane,
-				     struct drm_atomic_state *state)
+				     struct drm_plane_state *state)
 {
-	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state,
-										 plane);
 	struct tegra_plane *tegra = to_tegra_plane(plane);
 	int err;
 
 	/* no need for further checks if the plane is being disabled */
-	if (!new_plane_state->crtc)
+	if (!state->crtc)
 		return 0;
 
 	/* scaling not supported for cursor */
-	if ((new_plane_state->src_w >> 16 != new_plane_state->crtc_w) ||
-	    (new_plane_state->src_h >> 16 != new_plane_state->crtc_h))
+	if ((state->src_w >> 16 != state->crtc_w) ||
+	    (state->src_h >> 16 != state->crtc_h))
 		return -EINVAL;
 
 	/* only square cursors supported */
-	if (new_plane_state->src_w != new_plane_state->src_h)
+	if (state->src_w != state->src_h)
 		return -EINVAL;
 
-	if (new_plane_state->crtc_w != 32 && new_plane_state->crtc_w != 64 &&
-	    new_plane_state->crtc_w != 128 && new_plane_state->crtc_w != 256)
+	if (state->crtc_w != 32 && state->crtc_w != 64 &&
+	    state->crtc_w != 128 && state->crtc_w != 256)
 		return -EINVAL;
 
-	err = tegra_plane_state_add(tegra, new_plane_state);
+	err = tegra_plane_state_add(tegra, state);
 	if (err < 0)
 		return err;
 
@@ -869,19 +861,17 @@ static int tegra_cursor_atomic_check(struct drm_plane *plane,
 }
 
 static void tegra_cursor_atomic_update(struct drm_plane *plane,
-				       struct drm_atomic_state *state)
+				       struct drm_plane_state *old_state)
 {
-	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state,
-									   plane);
-	struct tegra_plane_state *tegra_plane_state = to_tegra_plane_state(new_state);
-	struct tegra_dc *dc = to_tegra_dc(new_state->crtc);
+	struct tegra_plane_state *state = to_tegra_plane_state(plane->state);
+	struct tegra_dc *dc = to_tegra_dc(plane->state->crtc);
 	u32 value = CURSOR_CLIP_DISPLAY;
 
 	/* rien ne va plus */
-	if (!new_state->crtc || !new_state->fb)
+	if (!plane->state->crtc || !plane->state->fb)
 		return;
 
-	switch (new_state->crtc_w) {
+	switch (plane->state->crtc_w) {
 	case 32:
 		value |= CURSOR_SIZE_32x32;
 		break;
@@ -900,15 +890,15 @@ static void tegra_cursor_atomic_update(struct drm_plane *plane,
 
 	default:
 		WARN(1, "cursor size %ux%u not supported\n",
-		     new_state->crtc_w, new_state->crtc_h);
+		     plane->state->crtc_w, plane->state->crtc_h);
 		return;
 	}
 
-	value |= (tegra_plane_state->iova[0] >> 10) & 0x3fffff;
+	value |= (state->iova[0] >> 10) & 0x3fffff;
 	tegra_dc_writel(dc, value, DC_DISP_CURSOR_START_ADDR);
 
 #ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
-	value = (tegra_plane_state->iova[0] >> 32) & 0x3;
+	value = (state->iova[0] >> 32) & 0x3;
 	tegra_dc_writel(dc, value, DC_DISP_CURSOR_START_ADDR_HI);
 #endif
 
@@ -927,16 +917,14 @@ static void tegra_cursor_atomic_update(struct drm_plane *plane,
 	tegra_dc_writel(dc, value, DC_DISP_BLEND_CURSOR_CONTROL);
 
 	/* position the cursor */
-	value = (new_state->crtc_y & 0x3fff) << 16 |
-		(new_state->crtc_x & 0x3fff);
+	value = (plane->state->crtc_y & 0x3fff) << 16 |
+		(plane->state->crtc_x & 0x3fff);
 	tegra_dc_writel(dc, value, DC_DISP_CURSOR_POSITION);
 }
 
 static void tegra_cursor_atomic_disable(struct drm_plane *plane,
-					struct drm_atomic_state *state)
+					struct drm_plane_state *old_state)
 {
-	struct drm_plane_state *old_state = drm_atomic_get_old_plane_state(state,
-									   plane);
 	struct tegra_dc *dc;
 	u32 value;
 
@@ -1754,7 +1742,7 @@ static int tegra_dc_wait_idle(struct tegra_dc *dc, unsigned long timeout)
 }
 
 static void tegra_crtc_atomic_disable(struct drm_crtc *crtc,
-				      struct drm_atomic_state *state)
+				      struct drm_crtc_state *old_state)
 {
 	struct tegra_dc *dc = to_tegra_dc(crtc);
 	u32 value;
@@ -1811,10 +1799,10 @@ static void tegra_crtc_atomic_disable(struct drm_crtc *crtc,
 }
 
 static void tegra_crtc_atomic_enable(struct drm_crtc *crtc,
-				     struct drm_atomic_state *state)
+				     struct drm_crtc_state *old_state)
 {
 	struct drm_display_mode *mode = &crtc->state->adjusted_mode;
-	struct tegra_dc_state *crtc_state = to_dc_state(crtc->state);
+	struct tegra_dc_state *state = to_dc_state(crtc->state);
 	struct tegra_dc *dc = to_tegra_dc(crtc);
 	u32 value;
 	int err;
@@ -1894,7 +1882,7 @@ static void tegra_crtc_atomic_enable(struct drm_crtc *crtc,
 		tegra_dc_writel(dc, 0, DC_DISP_BORDER_COLOR);
 
 	/* apply PLL and pixel clock changes */
-	tegra_dc_commit_state(dc, crtc_state);
+	tegra_dc_commit_state(dc, state);
 
 	/* program display mode */
 	tegra_dc_set_timings(dc, mode);
@@ -1930,7 +1918,7 @@ static void tegra_crtc_atomic_enable(struct drm_crtc *crtc,
 }
 
 static void tegra_crtc_atomic_begin(struct drm_crtc *crtc,
-				    struct drm_atomic_state *state)
+				    struct drm_crtc_state *old_crtc_state)
 {
 	unsigned long flags;
 
@@ -1949,19 +1937,17 @@ static void tegra_crtc_atomic_begin(struct drm_crtc *crtc,
 }
 
 static void tegra_crtc_atomic_flush(struct drm_crtc *crtc,
-				    struct drm_atomic_state *state)
+				    struct drm_crtc_state *old_crtc_state)
 {
-	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state,
-									  crtc);
-	struct tegra_dc_state *dc_state = to_dc_state(crtc_state);
+	struct tegra_dc_state *state = to_dc_state(crtc->state);
 	struct tegra_dc *dc = to_tegra_dc(crtc);
 	u32 value;
 
-	value = dc_state->planes << 8 | GENERAL_UPDATE;
+	value = state->planes << 8 | GENERAL_UPDATE;
 	tegra_dc_writel(dc, value, DC_CMD_STATE_CONTROL);
 	value = tegra_dc_readl(dc, DC_CMD_STATE_CONTROL);
 
-	value = dc_state->planes | GENERAL_ACT_REQ;
+	value = state->planes | GENERAL_ACT_REQ;
 	tegra_dc_writel(dc, value, DC_CMD_STATE_CONTROL);
 	value = tegra_dc_readl(dc, DC_CMD_STATE_CONTROL);
 }

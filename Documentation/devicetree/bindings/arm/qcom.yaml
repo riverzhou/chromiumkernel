@@ -37,7 +37,6 @@ description: |
         msm8994
         msm8996
         sc7180
-        sc7280
         sdm630
         sdm660
         sdm845
@@ -162,11 +161,6 @@ properties:
           - enum:
               - qcom,sc7180-idp
           - const: qcom,sc7180
-
-      - items:
-          - enum:
-              - qcom,sc7280-idp
-          - const: qcom,sc7280
 
       - items:
           - enum:

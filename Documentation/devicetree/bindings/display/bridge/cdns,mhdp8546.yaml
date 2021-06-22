@@ -57,37 +57,47 @@ properties:
     maxItems: 1
 
   ports:
-    $ref: /schemas/graph.yaml#/properties/ports
+    type: object
+    description:
+      Ports as described in Documentation/devicetree/bindings/graph.txt.
 
     properties:
+      '#address-cells':
+        const: 1
+
+      '#size-cells':
+        const: 0
+
       port@0:
-        $ref: /schemas/graph.yaml#/properties/port
+        type: object
         description:
           First input port representing the DP bridge input.
 
       port@1:
-        $ref: /schemas/graph.yaml#/properties/port
+        type: object
         description:
           Second input port representing the DP bridge input.
 
       port@2:
-        $ref: /schemas/graph.yaml#/properties/port
+        type: object
         description:
           Third input port representing the DP bridge input.
 
       port@3:
-        $ref: /schemas/graph.yaml#/properties/port
+        type: object
         description:
           Fourth input port representing the DP bridge input.
 
       port@4:
-        $ref: /schemas/graph.yaml#/properties/port
+        type: object
         description:
           Output port representing the DP bridge output.
 
     required:
       - port@0
       - port@4
+      - '#address-cells'
+      - '#size-cells'
 
 allOf:
   - if:

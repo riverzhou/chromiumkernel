@@ -166,6 +166,8 @@ static int chromiumos_security_inode_follow_link(struct dentry *dentry,
 	static char accessed_path[PATH_MAX];
 	enum chromiumos_inode_security_policy policy;
 
+	return 0;
+
 	policy = chromiumos_get_inode_security_policy(
 		dentry, inode,
 		CHROMIUMOS_SYMLINK_TRAVERSAL);
