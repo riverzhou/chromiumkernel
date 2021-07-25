@@ -11,9 +11,11 @@
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+
 #include "sdm845.dtsi"
 #include "pm8998.dtsi"
 #include "pmi8998.dtsi"
+
 
 /delete-node/ &tz_mem;
 /delete-node/ &adsp_mem;
@@ -540,8 +542,20 @@
 	qcom,preemphasis-width = <QUSB2_V2_PREEMPHASIS_WIDTH_HALF_BIT>;
 };
 
+&usb_1_qmpphy {
+	status = "okay";
+
+	vdda-phy-supply = <&vdda_usb1_ss_1p2>;
+	vdda-pll-supply = <&vdda_usb1_ss_core>;
+};
+
+&tlmm {
+	gpio-reserved-ranges = <0 4>, <81 4>;
+};
+
 /* PINCTRL - additions to nodes defined in sdm845.dtsi */
 
+/*
 &qup_i2c10_default {
 	pinconf {
 		pins = "gpio55", "gpio56";
@@ -549,7 +563,9 @@
 		bias-disable;
 	};
 };
+*/
 
+/*
 &qup_uart9_default {
 	pinconf-tx {
 		pins = "gpio4";
@@ -563,8 +579,5 @@
 		bias-pull-up;
 	};
 };
-
-&tlmm {
-	gpio-reserved-ranges = <0 4>, <81 4>;
-};
+*/
 
