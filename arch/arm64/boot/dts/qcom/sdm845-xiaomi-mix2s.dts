@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * SDM845 Xiaomi MIX 2s (polaris) device tree
- *
- * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- */
+	SDM845 Xiaomi MIX 2s (polaris) device tree
+*/
 
 /dts-v1/;
 
+#include <dt-bindings/dma/qcom-gpi.h>
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include <dt-bindings/sound/qcom,q6afe.h>
+#include <dt-bindings/sound/qcom,q6asm.h>
 #include "sdm845.dtsi"
+#include "pm8998.dtsi"
+#include "pmi8998.dtsi"
 
 /*
  * Delete following upstream (sdm845.dtsi) reserved
@@ -26,10 +30,20 @@
 /delete-node/ &spss_mem;
 /delete-node/ &rmtfs_mem;
 
-/ {
+/delete-node/ &cdsp_pas;
+/delete-node/ &dsi0;
+/delete-node/ &dsi0_phy;
+/delete-node/ &dsi1;
+/delete-node/ &dsi1_phy;
+/delete-node/ &mdss;
+/delete-node/ &mss_pil;
+/delete-node/ &sdhc_2;
 
+/delete-node/ &dispcc;
+
+/ {
 	model = "Xiaomi MIX 2s";
-	compatible = "xiaomi,polaris", "qcom,sdm845", "qcom,mtp";;
+	compatible = "xiaomi,polaris", "qcom,sdm845";
 
 	/* required for bootloader to select correct board */
 	qcom,board-id = <0x2a 0x0>;
@@ -37,7 +51,7 @@
 
 	aliases {
 		serial0 = &uart9;
-		display0 = &framebuffer0;
+		hsuart0 = &uart6;
 	};
 
 	chosen {
@@ -47,13 +61,13 @@
 
 		// For simplefb hack
 		stdout-path = "display0";
-
+		
 		/* hack: use framebuffer setup by bootloader.
 		 * the address is taken from the bootloader config (strings xbl.img | grep "Display Reserved")
 		 */
-		framebuffer0: framebuffer@0x9d400000 {
+		framebuffer0: framebuffer@9d400000 {
 			compatible = "simple-framebuffer";
-			reg = <0x0 0x9d400000 0x0 (1080 * 2160 * 4)>;
+			reg = <0 0x9D400000 0 0x02400000>;
 			width = <1080>;
 			height = <2160>;
 			stride = <(1080 * 4)>;
@@ -62,15 +76,27 @@
 		};
 	};
 
-	reserved-memory {
+	gpio-keys {
+		compatible = "gpio-keys";
+		autorepeat;
 
-		/* hack: Framebuffer memory region. */
-		framebuffer_region@9d400000 {
-			reg = <0x0 0x9d400000 0x0 0x02400000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&vol_up_pin_a>;
+
+		vol-up {
+			label = "Volume Up";
+			linux,code = <KEY_VOLUMEUP>;
+			gpios = <&pm8998_gpio 6 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	/* Reserved memory changes from downstream */
+	reserved-memory {
+		tz_mem: memory@86200000 {
+			reg = <0 0x86200000 0 0x4900000>;
 			no-map;
 		};
 
-		/* Reserved memory changes from downstream */
 		adsp_mem: memory@8c500000 {
 			reg = <0 0x8c500000 0 0x1e00000>;
 			no-map;
@@ -111,27 +137,30 @@
 			no-map;
 		};
 
-		/*
-		 * The rmtfs memory region in downstream is 'dynamically allocated'
-		 * but given the same address every time. Hard code it as this address is
-		 * where the modem firmware expects it to be.
-		 */
-		rmtfs_mem: memory@f7301000 {
+		rmtfs_mem: memory@f6301000 {
 			compatible = "qcom,rmtfs-mem";
-			reg = <0 0xf7301000 0 0x200000>;
+			reg = <0 0xf6301000 0 0x200000>;
 			no-map;
 
 			qcom,client-id = <1>;
 			qcom,vmid = <15>;
 		};
-		
-		/*
-		 * It seems like reserving the old rmtfs_mem region is also needed to prevent
-		 * random crashes which are most likely modem related, more testing needed.
-		 */
-		removed_region: memory@88f00000 {
+
+		/* hack: bootloader framebuffer */
+		cont_splash_region: memory@9d400000 {
+			compatible = "removed-dma-pool";
+			reg = <0 0x9D400000 0 0x02400000>;
 			no-map;
-			reg = <0 0x88f00000 0 0x200000>;
+		};
+
+		ramoops: ramoops@b0000000 {
+			compatible = "ramoops";
+			reg = <0 0xb0000000 0 0x00400000>;
+			record-size = <0x40000>; /*256x1024*/
+			console-size = <0x40000>;
+			ftrace-size = <0x40000>;
+			pmsg-size = <0x200000>;
+			ecc-size = <0x0>;
 		};
 	};
 
@@ -158,11 +187,6 @@
 
 		vin-supply = <&vph_pwr>;
 	};
-};
-
-&adsp_pas {
-	status = "okay";
-	firmware-name = "qcom/sdm845/mi8/adsp.mbn";
 };
 
 &apps_rsc {
@@ -461,7 +485,91 @@
 	};
 };
 
-&cdsp_pas {
+/*
+&apps_rsc {
+	pm8998-rpmh-regulators {
+		compatible = "qcom,pm8998-rpmh-regulators";
+		qcom,pmic-id = "a";
+
+		vreg_l1a_0p875: ldo1 {
+			regulator-min-microvolt = <880000>;
+			regulator-max-microvolt = <880000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l5a_0p8: ldo5 {
+			regulator-min-microvolt = <800000>;
+			regulator-max-microvolt = <800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l7a_1p8: ldo7 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l12a_1p8: ldo12 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l13a_2p95: ldo13 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <2960000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l14a_1p8: ldo14 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-boot-on;
+			regulator-always-on;
+		};
+
+		vreg_l17a_1p3: ldo17 {
+			regulator-min-microvolt = <1304000>;
+			regulator-max-microvolt = <1304000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l20a_2p95: ldo20 {
+			regulator-min-microvolt = <2960000>;
+			regulator-max-microvolt = <2968000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l21a_2p95: ldo21 {
+			regulator-min-microvolt = <2960000>;
+			regulator-max-microvolt = <2968000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l24a_3p075: ldo24 {
+			regulator-min-microvolt = <3088000>;
+			regulator-max-microvolt = <3088000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l25a_3p3: ldo25 {
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3312000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l26a_1p2: ldo26 {
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-boot-on;
+		};
+	};
+};
+*/
+
+&apps_smmu {
 	status = "okay";
 };
 
@@ -473,26 +581,165 @@
 			   <GCC_LPASS_SWAY_CLK>;
 };
 
-&dispcc {
-	status = "disabled";
+&gpi_dma0 {
+	status = "okay";
+};
+
+&gpi_dma1 {
+	status = "okay";
 };
 
 &gpu {
 	status = "disabled";
 };
 
-/* Modem/wifi*/
-&mss_pil {
+&ibb {
+	regulator-min-microvolt = <4600000>;
+	regulator-max-microvolt = <6000000>;
+	regulator-over-current-protection;
+	regulator-pull-down;
+	regulator-soft-start;
+	qcom,discharge-resistor-kohms = <300>;
+};
+
+&lab {
+	regulator-min-microvolt = <4600000>;
+	regulator-max-microvolt = <6000000>;
+	regulator-over-current-protection;
+	regulator-pull-down;
+	regulator-soft-start;
+};
+
+&ipa {
 	status = "okay";
-	firmware-name = "qcom/sdm845/mi8/mba.mbn", "qcom/sdm845/mi8/modem.mbn";
+	memory-region = <&ipa_fw_mem>;
+};
+
+
+&i2c5 {
+	#dma-cells = <3>;
+	status="okay";
+
+	dmas = <&gpi_dma0 0 5 QCOM_GPI_I2C>,
+		   <&gpi_dma0 1 5 QCOM_GPI_I2C>;
+	dma-names = "tx", "rx";
+
+	/*smart PA*/
+	tas2559_codec: tas2559@4c{
+		#sound-dai-cells = <1>;
+		compatible = "ti,tas2559";
+		reg = <0x4c>;
+		ti,tas2559-reset-gpio = <&tlmm 12 0>;
+		ti,tas2560-reset-gpio = <&tlmm 76 0>;
+		ti,tas2559-irq-gpio = <&tlmm 11 0>;
+		ti,tas2560-irq-gpio = <&tlmm 30 0>;
+		ti,tas2559-addr = <0x4c>;
+		ti,tas2560-addr = <0x4d>;
+		ti,tas2559-channel = <0>; /* 0, left; 1, right */
+		ti,tas2560-channel = <1>; /* 0, left; 1, right */
+		ti,ycrc-enable = <1>; /* 0, disable; non-zero, enable */
+		ti,echo-ref = <0>; /* 0, left channel; 1, right channel; 2, both */
+		ti,bit-rate = <16>; /* 16, 20, 24, 32 */
+	};
+};
+
+&pm8998_gpio {
+	vol_up_pin_a: vol-up-active {
+		pins = "gpio6";
+		function = "normal";
+		input-enable;
+		bias-pull-up;
+		qcom,drive-strength = <PMIC_GPIO_STRENGTH_NO>;
+	};
+};
+
+&pmi8998_wled {
+	status = "okay";
+	qcom,current-limit-microamp = <20000>;
+	qcom,enabled-strings = <0 1>;
+	qcom,num-strings = <2>;
+	qcom,switching-freq = <600>;
+	qcom,cabc;
+};
+
+&pmi8998_fg {
+	status = "okay";
+	qcom,max-voltage-uv = <4400000>;
+	qcom,min-voltage-uv = <3700000>;
+	qcom,battery-capacity-ua = <4000000>;
+};
+
+&pmi8998_haptics {
+	status = "okay";
+	// This is the LRA resonant frequency and is device specific
+	qcom,wave-play-rate-us = <4878>;
+};
+
+&pm8998_pon {
+	resin {
+		compatible = "qcom,pm8941-resin";
+		interrupts = <0x0 0x8 1 IRQ_TYPE_EDGE_BOTH>;
+		debounce = <15625>;
+		bias-pull-up;
+		linux,code = <KEY_VOLUMEDOWN>;
+	};
+};
+
+/* QUAT I2S Uses 1 I2S SD Line for audio on TAS2559/60 amplifiers */
+&q6afedai {
+	qi2s@22 {
+		reg = <22>;
+		qcom,sd-lines = <0>;
+	};
+};
+
+&q6asmdai {
+	dai@0 {
+		reg = <0>;
+	};
+
+	dai@1 {
+		reg = <1>;
+	};
+
+	dai@2 {
+		reg = <2>;
+	};
+};
+
+&qupv3_id_0 {
+	status = "okay";
 };
 
 &qupv3_id_1 {
 	status = "okay";
 };
 
-&uart9 {
+&tlmm {
+	gpio-reserved-ranges = <0 4>, <81 4>;
+
+	wcd_intr_default: wcd_intr_default {
+		pins = <54>;
+		function = "gpio";
+
+		input-enable;
+		bias-pull-down;
+		drive-strength = <2>;
+	};
+};
+
+&uart6 {
 	status = "okay";
+
+	bluetooth {
+		compatible = "qcom,wcn3990-bt";
+
+		vddio-supply = <&vreg_s4a_1p8>;
+		vddxo-supply = <&vreg_l7a_1p8>;
+		vddrf-supply = <&vreg_l17a_1p3>;
+		vddch0-supply = <&vreg_l25a_3p3>;
+		max-speed = <3200000>;
+	};
 };
 
 &ufs_mem_hc {
@@ -501,14 +748,14 @@
 	reset-gpios = <&tlmm 150 GPIO_ACTIVE_LOW>;
 
 	vcc-supply = <&vreg_l20a_2p95>;
-	vcc-max-microamp = <600000>;
+	vcc-max-microamp = <800000>;
 };
 
 &ufs_mem_phy {
 	status = "okay";
 
-	vdda-phy-supply = <&vdda_ufs1_core>;
-	vdda-pll-supply = <&vdda_ufs1_1p2>;
+	vdda-phy-supply = <&vreg_l1a_0p875>;
+	vdda-pll-supply = <&vreg_l26a_1p2>;
 };
 
 &usb_1 {
@@ -540,47 +787,52 @@
 	vdda-pll-supply = <&vdda_usb1_ss_core>;
 };
 
-&usb_2 {
-	status = "okay";
-};
-
-&usb_2_dwc3 {
-	/*
-	 * Though the USB block on SDM845 can support host, there's no vbus
-	 * signal for this port on MTP.  Thus (unless you have a non-compliant
-	 * hub that works without vbus) the only sensible thing is to force
-	 * peripheral mode.
-	 */
-	dr_mode = "peripheral";
-};
-
-&usb_2_hsphy {
+/*
+&usb_1_hsphy {
 	status = "okay";
 
-	vdd-supply = <&vdda_usb2_ss_core>;
-	vdda-pll-supply = <&vdda_qusb_hs0_1p8>;
-	vdda-phy-dpdm-supply = <&vdda_qusb_hs0_3p1>;
+	vdd-supply = <&vreg_l1a_0p875>;
+	vdda-pll-supply = <&vreg_l12a_1p8>;
+	vdda-phy-dpdm-supply = <&vreg_l24a_3p075>;
 
 	qcom,imp-res-offset-value = <8>;
-	qcom,hstx-trim-value = <QUSB2_V2_HSTX_TRIM_22_8_MA>;
+	qcom,hstx-trim-value = <QUSB2_V2_HSTX_TRIM_21_6_MA>;
+	qcom,preemphasis-level = <QUSB2_V2_PREEMPHASIS_5_PERCENT>;
+	qcom,preemphasis-width = <QUSB2_V2_PREEMPHASIS_WIDTH_HALF_BIT>;
 };
 
-&usb_2_qmpphy {
+&usb_1_qmpphy {
 	status = "okay";
 
-	vdda-phy-supply = <&vdda_usb2_ss_1p2>;
-	vdda-pll-supply = <&vdda_usb2_ss_core>;
+	vdda-phy-supply = <&vreg_l26a_1p2>;
+	vdda-pll-supply = <&vreg_l1a_0p875>;
 };
-
-&wifi {
-	status = "okay";
-	vdd-0.8-cx-mx-supply = <&vreg_l5a_0p8>;
-	vdd-1.8-xo-supply = <&vreg_l7a_1p8>;
-	vdd-1.3-rfa-supply = <&vreg_l17a_1p3>;
-	vdd-3.3-ch0-supply = <&vreg_l25a_3p3>;
-};
+*/
 
 /* PINCTRL - additions to nodes defined in sdm845.dtsi */
+
+&qup_uart6_default {
+	pinmux {
+		pins = "gpio45", "gpio46", "gpio47", "gpio48";
+		function = "qup6";
+	};
+
+	cts {
+		pins = "gpio45";
+		bias-disable;
+	};
+
+	rts-tx {
+		pins = "gpio46", "gpio47";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	rx {
+		pins = "gpio48";
+		bias-pull-up;
+	};
+};
 
 &qup_i2c10_default {
 	pinconf {
@@ -605,5 +857,56 @@
 };
 
 &tlmm {
-	gpio-reserved-ranges = <0 4>, <81 4>;
+	ts_mux {
+
+		ts_int_active: ts_int_active {
+			mux {
+				pins = "gpio31";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio31";
+				drive-strength = <16>;
+				bias-pull-down;
+				input-enable;
+			};
+		};
+
+		ts_reset_active: ts_reset_active {
+			mux {
+				pins = "gpio32";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio32";
+				drive-strength = <16>;
+				output-high;
+			};
+		};
+
+		ts_reset_suspend: ts_reset_suspend {
+			mux {
+				pins = "gpio32";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio32";
+				drive-strength = <2>;
+				bias-disable;
+				output-low;
+			};
+		};
+
+		ts_int_suspend: ts_int_suspend {
+			mux {
+				pins = "gpio31";
+				function = "gpio";
+			};
+
+		};
+	};
 };
+
