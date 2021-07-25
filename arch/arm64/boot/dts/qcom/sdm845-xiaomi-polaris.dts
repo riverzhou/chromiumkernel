@@ -495,15 +495,6 @@
 	qcom,micbias4-microvolt = <2700000>;
 };
 
-&wifi {
-	status = "okay";
-
-	vdd-0.8-cx-mx-supply = <&vreg_l5a_0p8>;
-	vdd-1.8-xo-supply = <&vreg_l7a_1p8>;
-	vdd-1.3-rfa-supply = <&vreg_l17a_1p3>;
-	vdd-3.3-ch0-supply = <&vreg_l25a_3p3>;
-};
-
 /* PINCTRL - additions to nodes defined in sdm845.dtsi */
 
 &qup_uart6_default {
@@ -580,32 +571,6 @@
 			};
 
 		};
-	};
-};
-
-&i2c14 {
-	status="okay";
-
-	dmas =  <&gpi_dma1 0 6 QCOM_GPI_I2C>,
-		<&gpi_dma1 1 6 QCOM_GPI_I2C>;
-	dma-names = "tx", "rx";
-
-	touchscreen: focaltech@38 {
-		compatible = "focaltech,fts";
-		reg = <0x38>;
-		interrupt-parent = <&tlmm>;
-		interrupts = <31 0>;
-		vddio-supply = <&vreg_l14a_1p8>;
-		lab-supply = <&lab>;
-		ibb-supply = <&ibb>;
-
-		focaltech,reset-gpio = <&tlmm 32 0x01>;
-		focaltech,irq-gpio = <&tlmm 31 0x02>;
-		focaltech,max-touch-number = <10>;
-		focaltech,display-coords = <0 0 1080 2160>;
-		pinctrl-names = "pmx_ts_active", "pmx_ts_suspend";
-		pinctrl-0 = <&ts_int_active &ts_reset_active>;
-		pinctrl-1 = <&ts_int_suspend &ts_reset_suspend>;
 	};
 };
 
