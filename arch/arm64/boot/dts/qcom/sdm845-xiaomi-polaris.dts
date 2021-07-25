@@ -29,7 +29,7 @@
 / {
 
 	model = "Xiaomi MIX 2s";
-	compatible = "xiaomi,polaris", "qcom,sdm845", "qcom,mtp";;
+	compatible = "xiaomi,polaris", "qcom,sdm845", "qcom,mtp";
 
 	/* required for bootloader to select correct board */
 	qcom,board-id = <0x2a 0x0>;
