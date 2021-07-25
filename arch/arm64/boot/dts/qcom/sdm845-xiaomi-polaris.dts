@@ -30,6 +30,17 @@
 /delete-node/ &spss_mem;
 /delete-node/ &rmtfs_mem;
 
+/delete-node/ &cdsp_pas;
+/delete-node/ &dsi0;
+/delete-node/ &dsi0_phy;
+/delete-node/ &dsi1;
+/delete-node/ &dsi1_phy;
+/delete-node/ &mdss;
+/delete-node/ &mss_pil;
+/delete-node/ &sdhc_2;
+
+/delete-node/ &dispcc;
+
 / {
 	model = "Xiaomi MIX 2s";
 	compatible = "xiaomi,polaris", "qcom,sdm845";
@@ -254,48 +265,6 @@
 	status = "okay";
 };
 
-&cdsp_pas {
-	status = "okay";
-	firmware-name = "qcom/sdm845/beryllium/cdsp.mbn";
-};
-
-&dsi0 {
-	status = "okay";
-	vdda-supply = <&vreg_l26a_1p2>;
-
-	#address-cells = <1>;
-	#size-cells = <0>;
-
-	display_panel: panel@0 {
-		status = "disabled";
-		reg = <0>;
-		vddi0-supply = <&vreg_l14a_1p8>;
-		vddpos-supply = <&lab>;
-		vddneg-supply = <&ibb>;
-
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		reset-gpios = <&tlmm 6 GPIO_ACTIVE_LOW>;
-
-		port {
-			panel_in_0: endpoint {
-				remote-endpoint = <&dsi0_out>;
-			};
-		};
-	};
-};
-
-&dsi0_out {
-	remote-endpoint = <&panel_in_0>;
-	data-lanes = <0 1 2 3>;
-};
-
-&dsi0_phy {
-	status = "okay";
-	vdds-supply = <&vreg_l1a_0p875>;
-};
-
 &gcc {
 	protected-clocks = <GCC_QSPI_CORE_CLK>,
 			   <GCC_QSPI_CORE_CLK_SRC>,
@@ -313,10 +282,7 @@
 };
 
 &gpu {
-	zap-shader {
-		memory-region = <&gpu_mem>;
-		firmware-name = "qcom/sdm845/beryllium/a630_zap.mbn";
-	};
+	status = "disabled";
 };
 
 &ibb {
@@ -334,19 +300,6 @@
 	regulator-over-current-protection;
 	regulator-pull-down;
 	regulator-soft-start;
-};
-
-&mdss {
-	status = "okay";
-};
-
-&mdss_mdp {
-	status = "okay";
-};
-
-&mss_pil {
-	status = "okay";
-	firmware-name = "qcom/sdm845/beryllium/mba.mbn", "qcom/sdm845/beryllium/modem.mbn";
 };
 
 &ipa {
@@ -454,126 +407,8 @@
 	status = "okay";
 };
 
-&sdhc_2 {
-	status = "okay";
-
-	pinctrl-names = "default";
-	pinctrl-0 = <&sdc2_default_state &sdc2_card_det_n>;
-
-	vmmc-supply = <&vreg_l21a_2p95>;
-	vqmmc-supply = <&vreg_l13a_2p95>;
-
-	bus-width = <4>;
-	cd-gpios = <&tlmm 126 GPIO_ACTIVE_HIGH>;
-};
-
-&sound {
-	compatible = "qcom,db845c-sndcard";
-	pinctrl-0 = <&quat_mi2s_active
-			&quat_mi2s_sd0_active>;
-	pinctrl-names = "default";
-	model = "Xiaomi Poco F1";
-	audio-routing =
-		"RX_BIAS", "MCLK",
-		"AMIC1", "MIC BIAS1",
-		"AMIC2", "MIC BIAS2",
-		"AMIC3", "MIC BIAS3";
-
-	mm1-dai-link {
-		link-name = "MultiMedia1";
-		cpu {
-			sound-dai = <&q6asmdai  MSM_FRONTEND_DAI_MULTIMEDIA1>;
-		};
-	};
-
-	mm2-dai-link {
-		link-name = "MultiMedia2";
-		cpu {
-			sound-dai = <&q6asmdai  MSM_FRONTEND_DAI_MULTIMEDIA2>;
-		};
-	};
-
-	mm3-dai-link {
-		link-name = "MultiMedia3";
-		cpu {
-			sound-dai = <&q6asmdai  MSM_FRONTEND_DAI_MULTIMEDIA3>;
-		};
-	};
-
-	tas2559-dai-link {
-		link-name = "Primary Spkr Playback";
-		cpu {
-			sound-dai = <&q6afedai QUATERNARY_MI2S_RX>;
-		};
-
-		platform {
-			sound-dai = <&q6routing>;
-		};
-
-		codec {
-			sound-dai =  <&tas2559_codec 0>;
-		};
-	};
-
-	slim-dai-link {
-		link-name = "SLIM Playback";
-		cpu {
-			sound-dai = <&q6afedai SLIMBUS_0_RX>;
-		};
-
-		platform {
-			sound-dai = <&q6routing>;
-		};
-
-		codec {
-			sound-dai =  <&wcd9340 0>;
-		};
-	};
-
-	slimcap-dai-link {
-		link-name = "SLIM Capture";
-		cpu {
-			sound-dai = <&q6afedai SLIMBUS_0_TX>;
-		};
-
-		platform {
-			sound-dai = <&q6routing>;
-		};
-
-		codec {
-			sound-dai = <&wcd9340 1>;
-		};
-	};
-};
-
 &tlmm {
 	gpio-reserved-ranges = <0 4>, <81 4>;
-
-	sdc2_default_state: sdc2-default {
-		clk {
-			pins = "sdc2_clk";
-			bias-disable;
-			drive-strength = <16>;
-		};
-
-		cmd {
-			pins = "sdc2_cmd";
-			bias-pull-up;
-			drive-strength = <10>;
-		};
-
-		data {
-			pins = "sdc2_data";
-			bias-pull-up;
-			drive-strength = <10>;
-		};
-	};
-
-	sdc2_card_det_n: sd-card-det-n {
-		pins = "gpio126";
-		function = "gpio";
-		bias-pull-up;
-	};
 
 	wcd_intr_default: wcd_intr_default {
 		pins = <54>;
