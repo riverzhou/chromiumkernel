@@ -33,16 +33,11 @@
 /delete-node/ &spss_mem;
 /delete-node/ &rmtfs_mem;
 
-/delete-node/ &cdsp_pas;
-/delete-node/ &dsi0;
-/delete-node/ &dsi0_phy;
-/delete-node/ &dsi1;
-/delete-node/ &dsi1_phy;
-/delete-node/ &mdss;
-/delete-node/ &mss_pil;
 /delete-node/ &sdhc_2;
 
-/delete-node/ &dispcc;
+/delete-node/ &cdsp_pas;
+/delete-node/ &adsp_pas;
+/delete-node/ &mss_pil;
 
 / {
 
@@ -535,8 +530,58 @@
 	status = "okay";
 };
 
+&dsi0 {
+	status = "okay";
+	vdda-supply = <&vdda_mipi_dsi0_1p2>;
+
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/*
+	 * Both devices use different panels but all other properties
+	 * are common. Compatible line is declared in device dts.
+	 */
+	display_panel: panel@0 {
+		status = "disabled";
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <0>;
+
+		vddio-supply = <&vreg_l14a_1p88>;
+		vddpos-supply = <&lab>;
+		vddneg-supply = <&ibb>;
+
+		reset-gpios = <&tlmm 6 GPIO_ACTIVE_LOW>;
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&dsi0_out>;
+			};
+		};
+	};
+};
+
+&dsi0_out {
+	remote-endpoint = <&panel_in>;
+	data-lanes = <0 1 2 3>;
+};
+
+&dsi0_phy {
+	status = "okay";
+	vdds-supply = <&vdda_mipi_dsi0_pll>;
+};
+
+&display_panel {
+	status = "okay";
+	compatible = "jdi,nt35596s";
+};
+
 &gpu {
-	status = "disabled";
+	zap-shader {
+		memory-region = <&gpu_mem>;
+		firmware-name = "qcom/sdm845/a630_zap.mbn";
+	};
 };
 
 &qupv3_id_1 {
@@ -545,6 +590,16 @@
 
 &uart9 {
 	status = "okay";
+};
+
+/* === always on === */ 
+&ibb {
+	regulator-always-on;
+};
+
+/* === always on === */ 
+&lab {
+	regulator-always-on;
 };
 
 /*
@@ -556,9 +611,7 @@
 	regulator-soft-start;
 	qcom,discharge-resistor-kohms = <300>;
 };
-*/
 
-/*
 &lab {
 	regulator-min-microvolt = <4600000>;
 	regulator-max-microvolt = <6000000>;
@@ -574,6 +627,14 @@
 	memory-region = <&ipa_fw_mem>;
 };
 */
+
+&mdss {
+	status = "okay";
+};
+
+&mdss_mdp {
+	status = "okay";
+};
 
 &pm8998_gpio {
 	volume_down_gpio: pm8998_gpio5 {
@@ -676,15 +737,6 @@
 
 &tlmm {
 	gpio-reserved-ranges = <0 4>, <81 4>;
-
-	wcd_intr_default: wcd_intr_default {
-		pins = <54>;
-		function = "gpio";
-
-		input-enable;
-		bias-pull-down;
-		drive-strength = <2>;
-        };
 };
 
 /* PINCTRL - additions to nodes defined in sdm845.dtsi */
